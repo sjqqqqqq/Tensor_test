@@ -1,0 +1,7 @@
+[deps]
+IJulia = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
+ITensorMPS = "0d1a4710-d33b-49a5-8f18-73bdf49b47e2"
+ITensors = "9136182c-28ba-11e9-034c-db9fb085ebd5"
+Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
+QuantumOptics = "6e0679c1-51ea-5a7c-ac74-d61b76210b0c"
