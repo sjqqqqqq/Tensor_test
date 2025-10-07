@@ -11,8 +11,8 @@ let
     Δ(t) = -0.1 * t
 
     # Time evolution parameters
-    tau = 0.01
-    ttotal = 10.0
+    ts = 0.01
+    tf = 5.0
     cutoff = 1E-8
 
     # Create site indices
@@ -26,8 +26,8 @@ let
         os += -J_val, "A", 1, "Adag", 2
         # On-site interaction terms
         for j in 1:N_sites
-            os += U_val/2, "N * N", j
-            os += -U_val/2, "N", j
+            os += U_val, "N * N", j
+            os += -U_val, "N", j
         end
         # Tilt terms
         for j in 1:N_sites
@@ -39,25 +39,27 @@ let
     # Initial state
     psi = MPS(s, ["$N_particles", "0"])
 
-    println("Time\tJ(t)\tU(t)\tΔ(t)\tSite1\tSite2\tTotal")
+    println("Time\tJ(t)\tU(t)\tΔ(t)\tSite1\tSite2\tTotal\tQFI")
 
     # Time evolution using TDVP
-    t = 0.0
-    while t <= ttotal
+    global List = []
+    for t in 0:ts:tf
         n1, n2 = expect(psi, "N"; sites=1), expect(psi, "N"; sites=2)
         N1, N2 = expect(psi, "N * N"; sites=1), expect(psi, "N * N"; sites=2)
-        sz1, sz2 = 
+        QFI = 2 * ((N1 + N2 - 2*n1*n2) - (-n1 + n2)^2)
         J_t, U_t, Δ_t= J(t), U(t), Δ(t)
-        println("$t\t$(round(J_t, digits=3))\t$(round(U_t, digits=3))\t$(round(Δ_t, digits=3))\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n1+n2, digits=2))")
-
-        t ≈ ttotal && break
+        println("$t\t$(round(J_t, digits=3))\t$(round(U_t, digits=3))\t$(round(Δ_t, digits=3))\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n1+n2, digits=2))\t$(round(QFI, digits=2))")
 
         # Build Hamiltonian at current time
         H = make_H(J_t, U_t, Δ_t, s)
 
         # Evolve using TDVP for one time step
-        psi = tdvp(H, -im * tau, psi; cutoff, normalize=true, nsite=2)
-
-        t += tau
+        psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
+        push!(List, QFI)
     end
 end
+
+##
+using DelimitedFiles
+
+writedlm("QFI_2x100.txt", List)
