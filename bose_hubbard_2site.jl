@@ -31,7 +31,7 @@ let
         end
         # Tilt terms
         for j in 1:N_sites
-            os += (j-1)*Δ_val, "N", j
+            os += (j-(N_sites+1)/2)*Δ_val, "N", j
         end
         return MPO(os, s)
     end
