@@ -48,7 +48,11 @@ let
     for t in 0:ts:tf
         n1, n2, n3 = expect(psi, "N"; sites=1), expect(psi, "N"; sites=2), expect(psi, "N"; sites=3)
         N1, N2, N3 = expect(psi, "N * N"; sites=1), expect(psi, "N * N"; sites=2), expect(psi, "N * N"; sites=3)
-        QFI = 4*((N1 + N3 - 2*n1*n3) - (-n1 + n3)^2)
+
+        # Compute <n1*n3> using correlation_matrix
+        n1n3 = correlation_matrix(psi, "N", "N")[1, 3]
+
+        QFI = 4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2)
         J_t, U_t, Δ_t= J(t), U(t), Δ(t)
         println("$t\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n3, digits=2))\t$(round(n1+n2+n3, digits=2))\t$(round(QFI, digits=2))")
 
@@ -64,4 +68,4 @@ end
 ##
 using DelimitedFiles
 
-writedlm("QFI_3x20.txt", List)
+writedlm("QFI_3x20.txt", real(List))

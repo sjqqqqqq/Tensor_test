@@ -46,7 +46,8 @@ let
     for t in 0:ts:tf
         n1, n2 = expect(psi, "N"; sites=1), expect(psi, "N"; sites=2)
         N1, N2 = expect(psi, "N * N"; sites=1), expect(psi, "N * N"; sites=2)
-        QFI = 2 * ((N1 + N2 - 2*n1*n2) - (-n1 + n2)^2)
+        n1n2 = correlation_matrix(psi, "N", "N")[1, 2]
+        QFI = 4 * ((N1/4 + N2/4 - n1n2/2) - (-0.5*n1 + 0.5*n2)^2)
         J_t, U_t, Δ_t= J(t), U(t), Δ(t)
         println("$t\t$(round(J_t, digits=3))\t$(round(U_t, digits=3))\t$(round(Δ_t, digits=3))\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n1+n2, digits=2))\t$(round(QFI, digits=2))")
 
@@ -62,4 +63,4 @@ end
 ##
 using DelimitedFiles
 
-writedlm("QFI_2x100.txt", List)
+writedlm("QFI_2x100.txt", real(List))
