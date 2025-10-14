@@ -2,8 +2,8 @@ using ITensors, ITensorMPS
 
 let
     # System parameters
-    N_sites = 3
-    N_particles = 100
+    N_sites = 4
+    N_particles = 40
 
     # Time-dependent parameters
     J(t) = 1.0 + 0.5*sin(0.5*t)
@@ -39,22 +39,27 @@ let
     end
 
     # Initial state
-    psi = MPS(s, ["$N_particles", "0", "0"])
+    psi = MPS(s, ["$N_particles", "0", "0", "0"])
 
-    println("Time\tSite1\tSite2\tSite3\tTotal\tQFI")
+    println("Time\tSite1\tSite2\tSite3\tSite4\tTotal\tQFI")
 
     # Time evolution using TDVP
     global List = []
     for t in 0:ts:tf
-        n1, n2, n3 = expect(psi, "N"; sites=1), expect(psi, "N"; sites=2), expect(psi, "N"; sites=3)
-        N1, N2, N3 = expect(psi, "N * N"; sites=1), expect(psi, "N * N"; sites=2), expect(psi, "N * N"; sites=3)
+        n1, n2, n3, n4 = expect(psi, "N"; sites=1), expect(psi, "N"; sites=2), expect(psi, "N"; sites=3), expect(psi, "N"; sites=4)
+        N1, N2, N3, N4 = expect(psi, "N * N"; sites=1), expect(psi, "N * N"; sites=2), expect(psi, "N * N"; sites=3), expect(psi, "N * N"; sites=4)
 
         # Compute <n1*n3> using correlation_matrix
+        n1n2 = correlation_matrix(psi, "N", "N")[1, 2]
         n1n3 = correlation_matrix(psi, "N", "N")[1, 3]
+        n1n4 = correlation_matrix(psi, "N", "N")[1, 4]
+        n2n3 = correlation_matrix(psi, "N", "N")[2, 3]
+        n2n4 = correlation_matrix(psi, "N", "N")[2, 4]
+        n3n4 = correlation_matrix(psi, "N", "N")[3, 4]
 
-        QFI = 4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2)
+        QFI = 4*((9*N1/4 + 3*n1n2/2 - 3*n1n3/2 - 9*n1n4/2 + N2/4 - n2n3/2 -3*n2n4/2 + N3/4 + 3*n3n4/2 + 9*N4/4) - (-1.5*n1 + -0.5*n2 + 0.5*n3 + 1.5*n4)^2)
         J_t, U_t, Δ_t= J(t), U(t), Δ(t)
-        println("$t\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n3, digits=2))\t$(round(n1+n2+n3, digits=2))\t$(round(QFI, digits=2))")
+        println("$t\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n3, digits=2))\t$(round(n4, digits=2))\t$(round(n1+n2+n3+n4, digits=2))\t$(round(QFI, digits=2))")
 
         # Build Hamiltonian at current time
         H = make_H(J_t, U_t, Δ_t, s)
@@ -64,8 +69,3 @@ let
         push!(List, QFI)
     end
 end
-
-##
-using DelimitedFiles
-
-writedlm("QFI_3x20.txt", real(List))
