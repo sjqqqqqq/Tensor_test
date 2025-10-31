@@ -44,28 +44,37 @@ let
     println("Time\tSite1\tSite2\tSite3\tSite4\tSite5\tTotal\tQFI")
 
     # Time evolution using TDVP
-    global List = []
-    for t in 0:ts:tf
-        n1, n2, n3, n4, n5 = expect(psi, "N"; sites=1), expect(psi, "N"; sites=2), expect(psi, "N"; sites=3), expect(psi, "N"; sites=4), expect(psi, "N"; sites=5)
-        N1, N2, N3, N4, N5 = expect(psi, "N * N"; sites=1), expect(psi, "N * N"; sites=2), expect(psi, "N * N"; sites=3), expect(psi, "N * N"; sites=4), expect(psi, "N * N"; sites=5)
+    num_steps = Int(tf/ts) + 1
+    global List = Vector{Float64}(undef, num_steps)
 
-        # Compute <n1*n3> using correlation_matrix
-        n1n2 = correlation_matrix(psi, "N", "N")[1, 2]
-        n1n4 = correlation_matrix(psi, "N", "N")[1, 4]
-        n1n5 = correlation_matrix(psi, "N", "N")[1, 5]
-        n2n4 = correlation_matrix(psi, "N", "N")[2, 4]
-        n2n5 = correlation_matrix(psi, "N", "N")[2, 5]
-        n4n5 = correlation_matrix(psi, "N", "N")[4, 5]
+    for (step_idx, t) in enumerate(0:ts:tf)
+        # Batch expect calls for "N" operator
+        n_vals = expect(psi, "N")
+        n1, n2, n3, n4, n5 = n_vals[1], n_vals[2], n_vals[3], n_vals[4], n_vals[5]
+
+        # Batch expect calls for "N * N" operator
+        N_vals = expect(psi, "N * N")
+        N1, N2, N4, N5 = N_vals[1], N_vals[2], N_vals[4], N_vals[5]
+
+        # Compute correlation matrix once and extract needed elements
+        corr_mat = correlation_matrix(psi, "N", "N")
+        n1n2, n1n4, n1n5 = corr_mat[1, 2], corr_mat[1, 4], corr_mat[1, 5]
+        n2n4, n2n5, n4n5 = corr_mat[2, 4], corr_mat[2, 5], corr_mat[4, 5]
 
         QFI = 4*((4*N1 + 4*n1n2 - 4*n1n4 - 8*n1n5 + N2 - 2*n2n4 - 4*n2n5 + N4 + 4*n4n5 + 4*N5) - (-2n1 + -n2 + n4 + 2*n5)^2)
-        J_t, U_t, Δ_t= J(t), U(t), Δ(t)
-        println("$t\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n3, digits=2))\t$(round(n4, digits=2))\t$(round(n5, digits=2))\t$(round(n1+n2+n3+n4+n5, digits=2))\t$(round(QFI, digits=2))")
+
+        # Pre-compute rounded values for printing
+        n_total = n1 + n2 + n3 + n4 + n5
+        println(t, '\t', round(n1, digits=2), '\t', round(n2, digits=2), '\t',
+                round(n3, digits=2), '\t', round(n4, digits=2), '\t',
+                round(n5, digits=2), '\t', round(n_total, digits=2), '\t',
+                round(QFI, digits=2))
 
         # Build Hamiltonian at current time
-        H = make_H(J_t, U_t, Δ_t, s)
+        H = make_H(J(t), U(t), Δ(t), s)
 
         # Evolve using TDVP for one time step
         psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
-        push!(List, QFI)
+        List[step_idx] = real(QFI)
     end
 end
