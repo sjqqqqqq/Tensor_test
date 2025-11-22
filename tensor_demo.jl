@@ -34,7 +34,7 @@ c = div(N, 2) # center site
 # Compute and print <Sz> at each time step
 # then apply the gates to go to the next time
 for t in 0.0:tau:ttotal
-  Sz = expect(psi, "Sz"; sites=c)
+  Sz = 2 * expect(psi, "Sz"; sites=c)
   println("$t $Sz")
 
   t≈ttotal && break
