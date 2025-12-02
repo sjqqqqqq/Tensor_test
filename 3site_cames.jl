@@ -4,11 +4,17 @@ let
     # System parameters
     N_sites = 3
     N_particles = 100
+    a1 = 1.0
+    a2 = 0.5
+    ω1 = 2π
+    ω2 = π
+    ϕ1 = 0.0
+    ϕ2 = π/2
 
     # Time-dependent parameters
-    J(t) = 1.0 + 0.5*sin(0.5*t)
-    U(t) = 1.0 * cos(0.5 * t)
-    Δ(t) = -0.1 * t
+    J(t) = 1.0 + 0.0*t
+    U(t) = a1 * cos(ω1*t + ϕ1)
+    Δ(t) = a2 * sin(ω2*t + ϕ2)
 
     # Time evolution parameters
     ts = 0.01
@@ -41,10 +47,8 @@ let
     # Initial state
     psi = MPS(s, ["$N_particles", "0", "0"])
 
-    println("Time\tSite1\tSite2\tSite3\tTotal\tQFI")
-
     # Time evolution using TDVP
-    global List = []
+    global QFI = 0
     for t in 0:ts:tf
         n1, n2, n3 = expect(psi, "N"; sites=1), expect(psi, "N"; sites=2), expect(psi, "N"; sites=3)
         N1, N2, N3 = expect(psi, "N * N"; sites=1), expect(psi, "N * N"; sites=2), expect(psi, "N * N"; sites=3)
@@ -52,15 +56,13 @@ let
         # Compute <n1*n3> using correlation_matrix
         n1n3 = correlation_matrix(psi, "N", "N")[1, 3]
 
-        QFI = 4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2)
+        QFI = real(4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2))
         J_t, U_t, Δ_t= J(t), U(t), Δ(t)
-        println("$t\t$(round(n1, digits=2))\t$(round(n2, digits=2))\t$(round(n3, digits=2))\t$(round(n1+n2+n3, digits=2))\t$(round(QFI, digits=2))")
 
         # Build Hamiltonian at current time
         H = make_H(J_t, U_t, Δ_t, s)
 
         # Evolve using TDVP for one time step
         psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
-        push!(List, QFI)
     end
 end
