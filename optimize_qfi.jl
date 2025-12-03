@@ -13,8 +13,6 @@ const TS = 0.01
 const TF = 1.0
 const CUTOFF = 1E-8
 
-# Fixed parameters
-const J_FIXED = 1.0
 
 # Helper function to build time-dependent Hamiltonian MPO
 function make_H(J_val, U_val, Δ_val, s)
@@ -40,9 +38,9 @@ end
 function objective(x)
 
     # Time-dependent parameters
-    J(t) = J_FIXED + 0.0*t
-    U(t) = x[1] * cos(x[3]*t + x[5])
-    Δ(t) = x[2] * sin(x[4]*t + x[6])
+    J(t) = 1/2 * (1.0 + sin(x[3]*t + x[6]))
+    U(t) = x[1] * cos(x[4]*t + x[7])
+    Δ(t) = x[2] * sin(x[5]*t + x[8])
 
     # Create site indices
     s = siteinds("Boson", N_SITES; dim=N_PARTICLES + 1, conserve_qns=true)
@@ -81,7 +79,7 @@ function objective(x)
 
     # Return negative QFI (to minimize -QFI = maximize QFI)
     result = -QFI
-    println("Parameters: a=$(x[1:2]), ω=$(x[3:4]), ϕ=$(x[5:6]) => QFI=$QFI (objective=$result)")
+    println("Parameters: a=$(x[1:2]), ω=$(x[3:5]), ϕ=$(x[6:8]) => QFI=$QFI (objective=$result)")
     return result
 end
 
@@ -109,6 +107,9 @@ function main()
     println("\n" * "="^70)
     println("Optimization complete!")
     println("Maximum QFI = $(-result.minimum)")
+    println("optimal hopping J = 1/2 * (1.0 + sin($(x[3])*t + $(x[6])))")
+    println("optimal interaction U = $(x[1]) * cos($(x[4])*t + $(x[7]))")
+    println("optimal tilt Δ = $(x[2]) * sin($(x[5])*t + $(x[8]))")
 
     return result
 end
