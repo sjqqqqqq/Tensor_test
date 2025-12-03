@@ -90,7 +90,7 @@ function main()
     println("="^70)
 
     # Initial guess
-    x0 = [1.0, 0.5, 2π, π, π/2, 0.0]
+    x0 = [1.0, 0.5, 2π, 2π, 2π, -π/2, π/2, 0.0]
 
     # Run CMAES optimization
     result = Evolutionary.optimize(
