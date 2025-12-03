@@ -38,9 +38,9 @@ end
 function objective(x)
 
     # Time-dependent parameters
-    J(t) = 1/2 * (1.0 + sin(x[3]*t + x[6]))
-    U(t) = x[1] * cos(x[4]*t + x[7])
-    Δ(t) = x[2] * sin(x[5]*t + x[8])
+    J(t) = 1.0 + 0.0*t
+    U(t) = x[1] + x[2]*t + x[3]*t^2 + x[4]*t^3 + x[5]*t^4
+    Δ(t) = x[6] * x[7]*t + x[8]*t^2 + x[9]*t^3 + x[10]*t^4
 
     # Create site indices
     s = siteinds("Boson", N_SITES; dim=N_PARTICLES + 1, conserve_qns=true)
@@ -79,18 +79,17 @@ function objective(x)
 
     # Return negative QFI (to minimize -QFI = maximize QFI)
     result = -QFI
-    println("Parameters: a=$(x[1:2]), ω=$(x[3:5]), ϕ=$(x[6:8]) => QFI=$QFI (objective=$result)")
+    println("Parameters: a=$(x[1:5]), b=$(x[6:10]) => QFI=$QFI (objective=$result)")
     return result
 end
 
 # Main optimization
 function main()
     println("Starting QFI optimization using CMAES")
-    println("Optimizing parameters: [a, omega, phi]")
     println("="^70)
 
     # Initial guess
-    x0 = [1.0, 0.5, 2π, 2π, 2π, -π/2, π/2, 0.0]
+    x0 = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
 
     # Run CMAES optimization
     result = Evolutionary.optimize(
@@ -107,9 +106,9 @@ function main()
     println("\n" * "="^70)
     println("Optimization complete!")
     println("Maximum QFI = $(-result.minimum)")
-    println("optimal hopping J = 1/2 * (1.0 + sin($(x[3])*t + $(x[6])))")
-    println("optimal interaction U = $(x[1]) * cos($(x[4])*t + $(x[7]))")
-    println("optimal tilt Δ = $(x[2]) * sin($(x[5])*t + $(x[8]))")
+    # println("optimal hopping J = 1/2 * (1.0 + sin($(x[3])*t + $(x[6])))")
+    println("optimal interaction U = $(x[5])t⁴ + $(x[4])t³ + $(x[3])t² + $(x[2])t + $(x[1])")
+    println("optimal tilt Δ = $(x[10])t⁴ + $(x[9])t³ + $(x[8])t² + $(x[7])t + $(x[6])")
 
     return result
 end
