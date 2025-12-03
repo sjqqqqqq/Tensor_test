@@ -1,9 +1,12 @@
+using Pkg
+Pkg.activate("Tensor_test")
+
 using ITensors, ITensorMPS
 using Evolutionary
 
 # System parameters
 const N_SITES = 3
-const N_PARTICLES = 100
+const N_PARTICLES = 20
 
 # Time evolution parameters
 const TS = 0.01
@@ -109,3 +112,5 @@ function main()
 
     return result
 end
+
+main()
