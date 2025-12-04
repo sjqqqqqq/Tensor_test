@@ -3,17 +3,17 @@ using ITensors, ITensorMPS
 let
     # System parameters
     N_sites = 3
-    N_particles = 100
-    b0 = 1.0
-    b1 = 0.0
-    b2 = 0.0
-    b3 = 0.0
-    b4 = 0.0
-    c0 = 1.0
-    c1 = 0.0
-    c2 = 0.0
-    c3 = 0.0
-    c4 = 0.0
+    N_particles = 20
+    b0 = 0.07747897282755545
+    b1 = -0.563632017585953
+    b2 = 0.47017428975720826
+    b3 = -0.2745107053189222
+    b4 = 0.13071778117587068
+    c0 = 1.0471264153979678
+    c1 = 0.39289819529909775
+    c2 = -0.0758928824380212
+    c3 = -0.08082406801993186
+    c4 = -0.41591786297140004
 
     # Time-dependent parameters
     J(t) = 1.0 + 0.0*t
@@ -22,7 +22,7 @@ let
 
     # Time evolution parameters
     ts = 0.01
-    tf = 1.0
+    tf = 2.0
     cutoff = 1E-8
 
     # Create site indices
@@ -61,7 +61,7 @@ let
     psi = MPS(s, ["$N_particles", "0", "0"])
 
     # Time evolution using TDVP
-    QFI_final = 0.0
+    global Q_list = []
     for t in 0:ts:tf
         # Batch expectation value calculations for efficiency
         n_vals = expect(psi, "N")
@@ -76,7 +76,8 @@ let
         psi_temp = apply(Op3, psi; cutoff)
         n1n3 = real(inner(apply(Op1, psi; cutoff), psi_temp))
 
-        QFI_final = real(4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2))
+        QFI = real(4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2))
+        push!(Q_list, QFI)
 
         J_t, U_t, Δ_t = J(t), U(t), Δ(t)
 
@@ -87,5 +88,5 @@ let
         psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
     end
 
-    println("Final QFI: ", QFI_final)
+    println("Final QFI: ", Q_list[end])
 end
