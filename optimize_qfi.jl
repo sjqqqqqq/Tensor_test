@@ -106,6 +106,7 @@ function main()
     println("\n" * "="^70)
     println("Optimization complete!")
     println("Maximum QFI = $(-result.minimum)")
+    x = result.minimizer
     # println("optimal hopping J = 1/2 * (1.0 + sin($(x[3])*t + $(x[6])))")
     println("optimal interaction U = $(x[5])t⁴ + $(x[4])t³ + $(x[3])t² + $(x[2])t + $(x[1])")
     println("optimal tilt Δ = $(x[10])t⁴ + $(x[9])t³ + $(x[8])t² + $(x[7])t + $(x[6])")
