@@ -10,7 +10,7 @@ const N_PARTICLES = 20
 
 # Time evolution parameters
 const TS = 0.01
-const TF = 2.0
+const TF = 3.0
 const CUTOFF = 1E-8
 
 
