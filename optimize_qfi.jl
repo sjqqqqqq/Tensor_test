@@ -5,33 +5,44 @@ using ITensors, ITensorMPS
 using Evolutionary
 
 # System parameters
-const N_SITES = 3
-const N_PARTICLES = 20
+N_sites = 3
+N_particles = 30
 
 # Time evolution parameters
-const TS = 0.01
-const TF = 3.0
-const CUTOFF = 1E-8
+ts = 0.01
+tf = 2.0
+cutoff = 1E-8
+
+# Create site indices
+s = siteinds("Boson", N_sites; dim=N_particles + 1, conserve_qns=true)
+
+# Pre-build MPO components (avoid rebuilding in each iteration)
+# Hopping MPO
+os_J = OpSum()
+for j in 1:N_sites-1
+    os_J += -1.0, "Adag", j, "A", j+1
+    os_J += -1.0, "A", j, "Adag", j+1
+end
+H_J = MPO(os_J, s)
+
+# Interaction MPO
+os_U = OpSum()
+for j in 1:N_sites
+    os_U += 1.0, "N * N", j
+    os_U += -1.0, "N", j
+end
+H_U = MPO(os_U, s)
+
+# Tilt MPO
+os_Δ = OpSum()
+for j in 1:N_sites
+    os_Δ += (j-(N_sites+1)/2), "N", j
+end
+H_Δ = MPO(os_Δ, s)
 
 
-# Helper function to build time-dependent Hamiltonian MPO
-function make_H(J_val, U_val, Δ_val, s)
-    os = OpSum()
-    # Hopping terms
-    for j in 1:N_SITES-1
-        os += -J_val, "Adag", j, "A", j+1
-        os += -J_val, "A", j, "Adag", j+1
-    end
-    # On-site interaction terms
-    for j in 1:N_SITES
-        os += U_val, "N * N", j
-        os += -U_val, "N", j
-    end
-    # Tilt terms
-    for j in 1:N_SITES
-        os += (j-(N_SITES+1)/2)*Δ_val, "N", j
-    end
-    return MPO(os, s)
+function make_H(J_val, U_val, Δ_val)
+    return J_val * H_J + U_val * H_U + Δ_val * H_Δ
 end
 
 # Objective function to minimize (returns -QFI to maximize QFI)
@@ -42,23 +53,24 @@ function objective(x)
     U(t) = x[1] + x[2]*t + x[3]*t^2 + x[4]*t^3 + x[5]*t^4
     Δ(t) = x[6] * x[7]*t + x[8]*t^2 + x[9]*t^3 + x[10]*t^4
 
-    # Create site indices
-    s = siteinds("Boson", N_SITES; dim=N_PARTICLES + 1, conserve_qns=true)
-
     # Initial state: all particles on first site
-    psi = MPS(s, ["$N_PARTICLES", "0", "0"])
+    psi = MPS(s, ["$N_particles", "0", "0"])
 
     # Time evolution using TDVP
     QFI = 0.0
     try
-        for t in 0:TS:TF
-            n1 = expect(psi, "N"; sites=1)
-            n3 = expect(psi, "N"; sites=3)
-            N1 = expect(psi, "N * N"; sites=1)
-            N3 = expect(psi, "N * N"; sites=3)
+        for t in 0:ts:tf
+            n_vals = expect(psi, "N")
+            n1, n2, n3 = n_vals[1], n_vals[2], n_vals[3]
 
-            # Compute <n1*n3> using correlation_matrix
-            n1n3 = correlation_matrix(psi, "N", "N")[1, 3]
+            N_vals = expect(psi, "N * N")
+            N1, N2, N3 = N_vals[1], N_vals[2], N_vals[3]
+
+            # Compute <n1*n3> directly using inner product (more efficient than correlation_matrix)
+            Op1 = op("N", s[1])
+            Op3 = op("N", s[3])
+            psi_temp = apply(Op3, psi; cutoff)
+            n1n3 = real(inner(apply(Op1, psi; cutoff), psi_temp))
 
             # Compute QFI
             QFI = real(4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2))
@@ -67,10 +79,10 @@ function objective(x)
             J_t, U_t, Δ_t = J(t), U(t), Δ(t)
 
             # Build Hamiltonian at current time
-            H = make_H(J_t, U_t, Δ_t, s)
+            H = make_H(J_t, U_t, Δ_t)
 
             # Evolve using TDVP for one time step
-            psi = tdvp(H, -im * TS, psi; cutoff=CUTOFF, normalize=true, nsite=2)
+            psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
         end
     catch e
         println("Error during simulation: $e")
