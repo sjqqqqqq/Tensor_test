@@ -18,12 +18,12 @@ s = siteinds("Boson", N_sites; dim=N_particles + 1, conserve_qns=true)
 
 # Pre-build MPO components (avoid rebuilding in each iteration)
 # Hopping MPO
-local os_J = OpSum()
+os_J1 = OpSum()
 for j in 1:N_sites-1
-    os_J += -1.0, "Adag", j, "A", j+1
-    os_J += -1.0, "A", j, "Adag", j+1
+    os_J1 += -1.0, "Adag", j, "A", j+1
+    os_J1 += -1.0, "A", j, "Adag", j+1
 end
-H_J = MPO(os_J, s)
+H_J = MPO(os_J1, s)
 
 # Interaction MPO
 os_U = OpSum()
