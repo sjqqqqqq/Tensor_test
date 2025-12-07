@@ -10,7 +10,7 @@ let
 
     # Time evolution parameters
     ts = 0.1
-    tf = 1.0
+    tf = 8.0
     cutoff = 1E-8
 
     # Create site indices
@@ -90,7 +90,7 @@ end
 using DelimitedFiles
 
 cd("Data")
-writedlm("QFI_rand_6.txt", Q_list)
-writedlm("J_rand_6.txt", Jt)
-writedlm("U_rand_6.txt", Ut)
-writedlm("Delta_rand_6.txt", Δt)
+writedlm("QFI_rand_8.txt", Q_list)
+writedlm("J_rand_8.txt", Jt)
+writedlm("U_rand_8.txt", Ut)
+writedlm("Delta_rand_8.txt", Δt)
