@@ -10,7 +10,7 @@ let
 
     # Time evolution parameters
     ts = 0.1
-    tf = 3.0
+    tf = 6.0
     cutoff = 1E-8
 
     # Create site indices
@@ -70,7 +70,7 @@ let
         QFI = real(4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2))
         push!(Q_list, QFI)
 
-        J_t, U_t, Δ_t = rand(), randn(), rand()
+        J_t, U_t, Δ_t = rand(), 2*rand()-1, 2*rand()-1
         push!(Jt, J_t)
         push!(Ut, U_t)
         push!(Δt, Δ_t)
@@ -89,7 +89,7 @@ end
 
 using DelimitedFiles
 
-writedlm("QFI_rand_3.txt", Q_list)
-writedlm("J_rand_3.txt", Jt)
-writedlm("U_rand_3.txt", Ut)
-writedlm("Delta_rand_3.txt", Δt)
+writedlm("QFI_rand_6.txt", Q_list)
+writedlm("J_rand_6.txt", Jt)
+writedlm("U_rand_6.txt", Ut)
+writedlm("Delta_rand_6.txt", Δt)
