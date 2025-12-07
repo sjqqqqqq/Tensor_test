@@ -1,3 +1,6 @@
+using Pkg
+Pkg.activate("Tensor_test")
+
 using ITensors, ITensorMPS
 
 let
