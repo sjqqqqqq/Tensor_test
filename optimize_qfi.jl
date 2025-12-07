@@ -18,16 +18,18 @@ s = siteinds("Boson", N_sites; dim=N_particles + 1, conserve_qns=true)
 
 # Pre-build MPO components (avoid rebuilding in each iteration)
 # Hopping MPO
-os_J1 = OpSum()
+os_J = OpSum()
 for j in 1:N_sites-1
-    os_J1 += -1.0, "Adag", j, "A", j+1
-    os_J1 += -1.0, "A", j, "Adag", j+1
+    global os_J
+    os_J += -1.0, "Adag", j, "A", j+1
+    os_J += -1.0, "A", j, "Adag", j+1
 end
-H_J = MPO(os_J1, s)
+H_J = MPO(os_J, s)
 
 # Interaction MPO
 os_U = OpSum()
 for j in 1:N_sites
+    global os_U
     os_U += 1.0, "N * N", j
     os_U += -1.0, "N", j
 end
@@ -36,6 +38,7 @@ H_U = MPO(os_U, s)
 # Tilt MPO
 os_Δ = OpSum()
 for j in 1:N_sites
+    global os_Δ
     os_Δ += (j-(N_sites+1)/2), "N", j
 end
 H_Δ = MPO(os_Δ, s)
