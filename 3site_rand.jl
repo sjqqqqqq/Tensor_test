@@ -10,7 +10,7 @@ let
 
     # Time evolution parameters
     ts = 0.1
-    tf = 10.0
+    tf = 3.0
     cutoff = 1E-8
 
     # Create site indices
@@ -75,6 +75,8 @@ let
         push!(Ut, U_t)
         push!(Δt, Δ_t)
 
+        println("$t\t$(round(QFI, digits=2))")
+
         # Build Hamiltonian using pre-computed MPO components
         H = make_H(J_t, U_t, Δ_t)
 
@@ -84,3 +86,10 @@ let
 
     println("Final QFI: ", Q_list[end])
 end
+
+using DelimitedFiles
+
+writedlm("QFI_rand_3.txt", Q_list)
+writedlm("J_rand_3.txt", Jt)
+writedlm("U_rand_3.txt", Ut)
+writedlm("Delta_rand_3.txt", Δt)
