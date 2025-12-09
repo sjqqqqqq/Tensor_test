@@ -6,7 +6,7 @@ using Evolutionary
 
 # System parameters
 N_sites = 3
-N_particles = 30
+N_particles = 20
 
 # Time evolution parameters
 ts = 0.01
@@ -104,7 +104,7 @@ function main()
     println("="^70)
 
     # Initial guess
-    x0 = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+    x0 = [0.07747897282755545, -0.563632017585953, 0.47017428975720826, -0.2745107053189222, 0.13071778117587068, 1.0471264153979678, 0.39289819529909775, -0.0758928824380212, -0.08082406801993186, -0.41591786297140004]
 
     # Run CMAES optimization
     result = Evolutionary.optimize(
