@@ -55,6 +55,7 @@ let
 
     # Time evolution using TDVP
     global Q_list = []
+    global bond_dims = []
     for t in 0:ts:tf
         # Batch expectation value calculations for efficiency
         n_vals = expect(psi, "N")
@@ -72,6 +73,10 @@ let
         QFI = real(4*((N1 + N3 - 2*n1n3) - (-n1 + n3)^2))
         push!(Q_list, QFI)
 
+        # Compute bond dimension (maximum bond dimension across all bonds)
+        max_bond_dim = maxlinkdim(psi)
+        push!(bond_dims, max_bond_dim)
+
         J_t, U_t, Δ_t = J(t), U(t), Δ(t)
 
         # Build Hamiltonian using pre-computed MPO components
@@ -82,4 +87,5 @@ let
     end
 
     println("Final QFI: ", Q_list[end])
+    println("Final bond dimension: ", bond_dims[end])
 end
