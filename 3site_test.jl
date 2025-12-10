@@ -83,7 +83,7 @@ let
         H = make_H(J_t, U_t, Δ_t)
 
         # Evolve using TDVP for one time step
-        psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
+        psi = tdvp(H, -im * ts, psi; cutoff, maxdim=21, normalize=true, nsite=2)
     end
 
     println("Final QFI: ", Q_list[end])
