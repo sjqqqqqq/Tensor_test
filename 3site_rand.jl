@@ -10,7 +10,7 @@ let
 
     # Time evolution parameters
     ts = 0.01
-    tf = 5.0
+    tf = 10.0
     cutoff = 1E-8
 
     # Create site indices
@@ -81,7 +81,7 @@ let
         H = make_H(J_t, U_t, Δ_t)
 
         # Evolve using TDVP for one time step
-        psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
+        psi = tdvp(H, -im * ts, psi; cutoff, maxdim=50, normalize=true, nsite=2)
     end
 
     println("Final QFI: ", Q_list[end])
@@ -90,7 +90,7 @@ end
 using DelimitedFiles
 
 cd("Data")
-writedlm("QFI_rand_5.txt", Q_list)
-writedlm("J_rand_5.txt", Jt)
-writedlm("U_rand_5.txt", Ut)
-writedlm("Delta_rand_5.txt", Δt)
+writedlm("QFI_rand_10.txt", Q_list)
+writedlm("J_rand_10.txt", Jt)
+writedlm("U_rand_10.txt", Ut)
+writedlm("Delta_rand_10.txt", Δt)
