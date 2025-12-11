@@ -21,39 +21,41 @@ let
     # Create site indices
     s = siteinds("Boson", N_sites; dim=N_particles + 1, conserve_qns=true)
 
-    # Pre-build MPO components (avoid rebuilding in each iteration)
-    # Hopping MPO
-    os_J = OpSum()
-    for j in 1:N_sites-1
-        os_J += -1.0, "Adag", j, "A", j+1
-        os_J += -1.0, "A", j, "Adag", j+1
-    end
-    H_J = MPO(os_J, s)
+    # Helper function to build Trotter gates for one time step
+    function make_trotter_gates(J_val, U_val, Δ_val, dt, s)
+        gates = ITensor[]
 
-    # Interaction MPO
-    os_U = OpSum()
-    for j in 1:N_sites
-        os_U += 1.0, "N * N", j
-        os_U += -1.0, "N", j
-    end
-    H_U = MPO(os_U, s)
+        # One-site gates: U(t) * (N^2 - N) + Δ(t) * (j - (N_sites+1)/2) * N
+        for j in 1:N_sites
+            hj = U_val * op("N * N", s[j]) + U_val * (-1.0) * op("N", s[j])
+            hj += Δ_val * (j - (N_sites+1)/2) * op("N", s[j])
+            Gj = exp(-im * dt/2 * hj)
+            push!(gates, Gj)
+        end
 
-    # Tilt MPO
-    os_Δ = OpSum()
-    for j in 1:N_sites
-        os_Δ += (j-(N_sites+1)/2), "N", j
-    end
-    H_Δ = MPO(os_Δ, s)
+        # Two-site hopping gates: -J(t) * (adag_j * a_{j+1} + a_j * adag_{j+1})
+        for j in 1:N_sites-1
+            hj = -J_val * op("Adag", s[j]) * op("A", s[j+1])
+            hj += -J_val * op("A", s[j]) * op("Adag", s[j+1])
+            Gj = exp(-im * dt * hj)
+            push!(gates, Gj)
+        end
 
-    # Helper function to compute time-dependent Hamiltonian as linear combination
-    function make_H(J_val, U_val, Δ_val)
-        return J_val * H_J + U_val * H_U + Δ_val * H_Δ
+        # One-site gates again (second half of symmetric Trotter)
+        for j in 1:N_sites
+            hj = U_val * op("N * N", s[j]) + U_val * (-1.0) * op("N", s[j])
+            hj += Δ_val * (j - (N_sites+1)/2) * op("N", s[j])
+            Gj = exp(-im * dt/2 * hj)
+            push!(gates, Gj)
+        end
+
+        return gates
     end
 
     # Initial state
     psi = MPS(s, ["$N_particles", "0", "0"])
 
-    # Time evolution using TDVP
+    # Time evolution using Trotterization
     global Q_list = []
     global bond_dims = []
     for t in 0:ts:tf
@@ -75,11 +77,10 @@ let
 
         J_t, U_t, Δ_t = J(t), U(t), Δ(t)
 
-        # Build Hamiltonian using pre-computed MPO components
-        H = make_H(J_t, U_t, Δ_t)
-
-        # Evolve using TDVP for one time step
-        psi = tdvp(H, -im * ts, psi; cutoff, normalize=true, nsite=2)
+        # Build and apply Trotter gates
+        gates = make_trotter_gates(J_t, U_t, Δ_t, ts, s)
+        psi = apply(gates, psi; cutoff)
+        normalize!(psi)
     end
 
     println("Final QFI: ", Q_list[end])
