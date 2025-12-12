@@ -10,7 +10,7 @@ let
 
     # Time evolution parameters
     ts = 0.01
-    tf = 10.0
+    tf = 2.0
     cutoff = 1E-8
 
     # Create site indices
@@ -24,7 +24,7 @@ let
         for j in 1:N_sites
             hj = U_val * op("N * N", s[j]) + U_val * (-1.0) * op("N", s[j])
             hj += Δ_val * (j - (N_sites+1)/2) * op("N", s[j])
-            Gj = exp(-im * dt/2 * hj)
+            Gj = exp(-im * dt * hj)
             push!(gates, Gj)
         end
 
@@ -33,14 +33,6 @@ let
             hj = -J_val * op("Adag", s[j]) * op("A", s[j+1])
             hj += -J_val * op("A", s[j]) * op("Adag", s[j+1])
             Gj = exp(-im * dt * hj)
-            push!(gates, Gj)
-        end
-
-        # One-site gates again (second half of symmetric Trotter)
-        for j in 1:N_sites
-            hj = U_val * op("N * N", s[j]) + U_val * (-1.0) * op("N", s[j])
-            hj += Δ_val * (j - (N_sites+1)/2) * op("N", s[j])
-            Gj = exp(-im * dt/2 * hj)
             push!(gates, Gj)
         end
 
@@ -89,7 +81,7 @@ end
 using DelimitedFiles
 
 cd("Data")
-writedlm("QFI_MC_10.txt", Q_list)
-writedlm("J_MC_10.txt", Jt)
-writedlm("U_MC_10.txt", Ut)
-writedlm("Delta_MC_10.txt", Δt)
+writedlm("QFI_MC_1st_2.txt", Q_list)
+writedlm("J_MC_1st_2.txt", Jt)
+writedlm("U_MC_1st_2.txt", Ut)
+writedlm("Delta_1st_2.txt", Δt)
