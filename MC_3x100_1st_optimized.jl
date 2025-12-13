@@ -10,7 +10,7 @@ let
 
     # Time evolution parameters
     ts = 0.01
-    tf = 2.0
+    tf = 1.0
     cutoff = 1E-8
 
     # Create site indices
