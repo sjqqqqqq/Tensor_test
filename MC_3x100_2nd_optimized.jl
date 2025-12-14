@@ -1,5 +1,5 @@
 using Pkg
-Pkg.activate(".")
+Pkg.activate("Tensor_test")
 
 using ITensors, ITensorMPS
 
@@ -10,7 +10,7 @@ let
 
     # Time evolution parameters
     ts = 0.01
-    tf = 1.0
+    tf = 2.0
     cutoff = 1E-8
 
     # Create site indices
