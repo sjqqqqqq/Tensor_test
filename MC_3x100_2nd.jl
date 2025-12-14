@@ -88,6 +88,7 @@ end
 
 using DelimitedFiles
 
+isdir("Data") || mkdir("Data")
 cd("Data")
 writedlm("QFI_MC_2nd_2.txt", Q_list)
 writedlm("J_MC_2nd_2.txt", Jt)

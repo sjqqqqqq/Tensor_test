@@ -97,6 +97,7 @@ let
 
     # Write results
     using DelimitedFiles
+    isdir("Data") || mkdir("Data")
     cd("Data")
     writedlm("QFI_MC_1st_optimized.txt", Q_list)
     writedlm("J_MC_1st_optimized.txt", Jt)
