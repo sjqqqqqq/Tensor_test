@@ -1,6 +1,6 @@
 using Pkg
-Pkg.activate(".")
-# Pkg.activate("Tensor_test")
+# Pkg.activate(".")
+Pkg.activate("Tensor_test")
 
 using ITensors, ITensorMPS
 using DelimitedFiles
