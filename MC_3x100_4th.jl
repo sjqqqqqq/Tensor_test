@@ -1,4 +1,5 @@
 using Pkg
+# Pkg.activate(".")
 Pkg.activate("Tensor_test")
 
 using ITensors, ITensorMPS
@@ -93,8 +94,8 @@ for t in 0:ts:tf
     println("$t\t$(round(QFI, digits=2))")
 
     # Build and apply Trotter gates
-    gates = make_trotter_gates(J_t, U_t, Δ_t, ts, s)
-    psi = apply(gates, psi; cutoff)
+    gates = make_trotter_gates_4th(J_t, U_t, Δ_t, ts, s)
+    global psi = apply(gates, psi; cutoff)
     normalize!(psi)
 end
 
