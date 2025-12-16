@@ -23,10 +23,10 @@ const CONFIG = SimulationConfig(
     3,              # n_sites
     100,            # n_particles
     0.1,            # time_step
-    10.0,           # final_time
+    20.0,           # final_time
     1E-8,           # cutoff
     "Data",         # output_dir
-    "MC_4th_10"     # output_suffix
+    "MC_4th_20"     # output_suffix
 )
 
 # 4th order Suzuki-Trotter coefficients (Yoshida construction)
