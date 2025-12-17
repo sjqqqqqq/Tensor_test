@@ -187,7 +187,7 @@ function run_simulation(config::SimulationConfig)
         push!(U_history, U_t)
         push!(Δ_history, Δ_t)
 
-        println("t = $t\tQFI = $(round(QFI, digits=2))")
+        println("t = $t\tQFI = $(round(QFI, digits=2))\tJ = $(round(J_t, digits=3))\tU = $(round(U_t, digits=3))\tΔ = $(round(Δ_t, digits=3))")
 
         # Build and apply 4th order Trotter gates
         gates = make_trotter_gates_4th(J_t, U_t, Δ_t, config.time_step, s, config)
@@ -204,5 +204,5 @@ end
 
 QFI_data, J_data, U_data, Δ_data = run_simulation(CONFIG)
 
-save_simulation_data(CONFIG.output_dir, CONFIG.output_suffix,
-                     QFI_data, J_data, U_data, Δ_data)
+# save_simulation_data(CONFIG.output_dir, CONFIG.output_suffix,
+#                      QFI_data, J_data, U_data, Δ_data)
