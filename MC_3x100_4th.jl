@@ -23,10 +23,10 @@ const CONFIG = SimulationConfig(
     3,              # n_sites
     100,            # n_particles
     0.1,            # time_step
-    30.0,           # final_time
+    20.0,           # final_time
     1E-8,           # cutoff
     "Data",         # output_dir
-    "MC_4th_30"     # output_suffix
+    "MC_4th_20"     # output_suffix
 )
 
 # 4th order Suzuki-Trotter coefficients (Yoshida construction)
@@ -179,7 +179,7 @@ function run_simulation(config::SimulationConfig)
         push!(QFI_history, QFI)
 
         # Sample random parameters for this time step
-        J_t = rand()
+        J_t = 2 * rand()
         U_t = 2 * rand() - 1
         Δ_t = 2 * rand() - 1
 
