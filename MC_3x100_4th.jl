@@ -181,7 +181,7 @@ function run_simulation(config::SimulationConfig)
         # Sample random parameters for this time step
         J_t = 2 * rand()
         U_t = 2 * (2 * rand() - 1)
-        Δ_t = 2 * rand() - 1
+        Δ_t = 2 * (2 * rand() - 1)
 
         push!(J_history, J_t)
         push!(U_history, U_t)
