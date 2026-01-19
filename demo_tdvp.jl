@@ -11,58 +11,42 @@ struct SimulationConfig
     time_step::Float64
     final_time::Float64
     cutoff::Float64
+    maxdim::Int
 end
 
 # Initialize simulation configuration
 const CONFIG = SimulationConfig(
     3,              # n_sites
-    20,            # n_particles
-    0.02,            # time_step
+    20,             # n_particles
+    0.02,           # time_step
     10.0,           # final_time
     1E-8,           # cutoff
+    100,            # maxdim for TDVP
 )
 
 
-function build_onsite_hamiltonian(site_index::Int, U::Float64, Δ::Float64, s, config::SimulationConfig)
+function build_hamiltonian_mpo(J::Float64, U::Float64, Δ::Float64, s, config::SimulationConfig)
     center = (config.n_sites + 1) / 2
-    h = U * op("N * N", s[site_index]) + U * (-1.0) * op("N", s[site_index])
-    h += Δ * (site_index - center) * op("N", s[site_index])
-    return h
-end
 
+    os = OpSum()
 
-function build_hopping_hamiltonian(site_index::Int, J::Float64, s)
-    h = -J * op("Adag", s[site_index]) * op("A", s[site_index + 1])
-    h += -J * op("A", s[site_index]) * op("Adag", s[site_index + 1])
-    return h
-end
-
-
-function make_trotter_gates_2nd(J::Float64, U::Float64, Δ::Float64, dt::Float64, s, config::SimulationConfig)
-    gates = ITensor[]
-
-    # First half of one-site gates
+    # Onsite terms: U * N(N-1) + Δ * (j - center) * N
     for j in 1:config.n_sites
-        hj = build_onsite_hamiltonian(j, U, Δ, s, config)
-        Gj = exp(-im * dt/2 * hj)
-        push!(gates, Gj)
+        # Interaction: U * n_j * (n_j - 1) = U * N^2 - U * N
+        os += U, "N * N", j
+        os += -U, "N", j
+        # Tilt potential
+        os += Δ * (j - center), "N", j
     end
 
-    # Two-site hopping gates
+    # Hopping terms: -J * (a†_j a_{j+1} + h.c.)
     for j in 1:(config.n_sites - 1)
-        hj = build_hopping_hamiltonian(j, J, s)
-        Gj = exp(-im * dt * hj)
-        push!(gates, Gj)
+        os += -J, "Adag", j, "A", j + 1
+        os += -J, "A", j, "Adag", j + 1
     end
 
-    # Second half of one-site gates
-    for j in 1:config.n_sites
-        hj = build_onsite_hamiltonian(j, U, Δ, s, config)
-        Gj = exp(-im * dt/2 * hj)
-        push!(gates, Gj)
-    end
-
-    return gates
+    H = MPO(os, s)
+    return H
 end
 
 
@@ -114,12 +98,17 @@ function run_simulation(config::SimulationConfig)
         push!(U_history, U_t)
         push!(Δ_history, Δ_t)
 
-        println("t = $t\tQFI = $(round(QFI, digits=2))\tJ = $(round(J_t, digits=3))\tU = $(round(U_t, digits=3))\tΔ = $(round(Δ_t, digits=3))")
+        # println("t = $t\tQFI = $(round(QFI, digits=2))\tJ = $(round(J_t, digits=3))\tU = $(round(U_t, digits=3))\tΔ = $(round(Δ_t, digits=3))")
 
-        # Build and apply 2nd order Trotter gates
-        gates = make_trotter_gates_2nd(J_t, U_t, Δ_t, config.time_step, s, config)
-        psi = apply(gates, psi; cutoff=config.cutoff)
-        normalize!(psi)
+        # Build Hamiltonian MPO for current parameters
+        H = build_hamiltonian_mpo(J_t, U_t, Δ_t, s, config)
+
+        # Time evolve using TDVP (imaginary time step for real-time evolution: -im * dt)
+        psi = tdvp(H, -im * config.time_step, psi;
+                   cutoff=config.cutoff,
+                   maxdim=config.maxdim,
+                   normalize=true,
+                   outputlevel=0)
     end
 
     return QFI_history, J_history, U_history, Δ_history
