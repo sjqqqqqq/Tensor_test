@@ -1,5 +1,5 @@
 using Pkg
-Pkg.activate("Tensor_test")
+# Pkg.activate("Tensor_test")
 
 using ITensors, ITensorMPS
 using DelimitedFiles
@@ -16,8 +16,8 @@ end
 # Initialize simulation configuration
 const CONFIG = SimulationConfig(
     3,              # n_sites
-    100,            # n_particles
-    0.1,            # time_step
+    20,            # n_particles
+    0.025,            # time_step
     10.0,           # final_time
     1E-8,           # cutoff
 )
