@@ -21,7 +21,7 @@ const CONFIG = SimulationConfig(
     0.02,           # time_step
     10.0,           # final_time
     1E-8,           # cutoff
-    100,            # maxdim for TDVP
+    50,            # maxdim for TDVP
 )
 
 
@@ -115,4 +115,4 @@ function run_simulation(config::SimulationConfig)
 end
 
 
-QFI_data, J_data, U_data, Δ_data = run_simulation(CONFIG)
+QFI_data, J_data, U_data, Δ_data = run_simulation(CONFIG);
