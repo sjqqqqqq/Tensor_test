@@ -3,6 +3,10 @@ using Pkg
 
 using ITensors, ITensorMPS
 using DelimitedFiles
+using Combinatorics
+using LinearAlgebra
+
+include("BH_basis.jl")
 
 
 struct SimulationConfig
@@ -16,8 +20,8 @@ end
 # Initialize simulation configuration
 const CONFIG = SimulationConfig(
     3,              # n_sites
-    20,            # n_particles
-    0.02,            # time_step
+    10,            # n_particles
+    0.01,            # time_step
     10.0,           # final_time
     1E-8,           # cutoff
 )
@@ -122,8 +126,37 @@ function run_simulation(config::SimulationConfig)
         normalize!(psi)
     end
 
-    return QFI_history, J_history, U_history, Δ_history
+    return QFI_history, J_history, U_history, Δ_history, psi
 end
 
 
-QFI_data, J_data, U_data, Δ_data = run_simulation(CONFIG)
+QFI_data, J_data, U_data, Δ_data, final_psi = run_simulation(CONFIG)
+
+
+function mps_to_statevector(psi::MPS, s, config::SimulationConfig)
+    # Generate basis for N particles on L sites
+    Basis, Ind = make_basis(config.n_particles, config.n_sites)
+    dim = length(Basis)
+
+    # Initialize state vector
+    state_vector = zeros(ComplexF64, dim)
+
+    # For each basis state, compute the overlap ⟨basis_state|psi⟩
+    for (i, occ) in enumerate(Basis)
+        # Create product state string for this occupation: ["n1", "n2", "n3"]
+        state_str = [string(Int(n)) for n in occ]
+
+        # Create MPS for this basis state
+        basis_mps = MPS(s, state_str)
+
+        # Compute overlap
+        state_vector[i] = inner(basis_mps, psi)
+    end
+
+    return state_vector, Basis, Ind
+end
+
+# Convert final_psi to state vector (use siteinds from the MPS itself)
+s = siteinds(final_psi)
+state_vec, Basis, Ind = mps_to_statevector(final_psi, s, CONFIG)
+psi_re, psi_im = real(state_vec), imag(state_vec)
