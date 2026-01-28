@@ -33,10 +33,10 @@ let
             push!(gates, Gj)
         end
 
-        # Two-site hopping gates: -J(t) * (adag_j * a_{j+1} + a_j * adag_{j+1})
+        # Two-site hopping gates: J(t) * (adag_j * a_{j+1} + a_j * adag_{j+1})
         for j in 1:N_sites-1
-            hj = -J_val * op("Adag", s[j]) * op("A", s[j+1])
-            hj += -J_val * op("A", s[j]) * op("Adag", s[j+1])
+            hj = J_val * op("Adag", s[j]) * op("A", s[j+1])
+            hj += J_val * op("A", s[j]) * op("Adag", s[j+1])
             Gj = exp(-im * dt * hj)
             push!(gates, Gj)
         end

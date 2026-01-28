@@ -54,11 +54,11 @@ end
     build_hopping_hamiltonian(site_index, J, s)
 
 Constructs the hopping Hamiltonian between neighboring sites.
-H_hop = -J * (a†_j * a_{j+1} + a_j * a†_{j+1})
+H_hop = J * (a†_j * a_{j+1} + a_j * a†_{j+1})
 """
 function build_hopping_hamiltonian(site_index::Int, J::Float64, s)
-    h = -J * op("Adag", s[site_index]) * op("A", s[site_index + 1])
-    h += -J * op("A", s[site_index]) * op("Adag", s[site_index + 1])
+    h = J * op("Adag", s[site_index]) * op("A", s[site_index + 1])
+    h += J * op("A", s[site_index]) * op("Adag", s[site_index + 1])
     return h
 end
 

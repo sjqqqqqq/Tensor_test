@@ -22,8 +22,8 @@ let
     function make_H(J_val, U_val, Δ_val, s)
         os = OpSum()
         # Hopping terms
-        os += -J_val, "Adag", 1, "A", 2
-        os += -J_val, "A", 1, "Adag", 2
+        os += J_val, "Adag", 1, "A", 2
+        os += J_val, "A", 1, "Adag", 2
         # On-site interaction terms
         for j in 1:N_sites
             os += U_val, "N * N", j

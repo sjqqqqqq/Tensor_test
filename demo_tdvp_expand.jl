@@ -41,10 +41,10 @@ function build_hamiltonian_mpo(J::Float64, U::Float64, Δ::Float64, s, config::S
         os += Δ * (j - center), "N", j
     end
 
-    # Hopping terms: -J * (a†_j a_{j+1} + h.c.)
+    # Hopping terms: J * (a†_j a_{j+1} + h.c.)
     for j in 1:(config.n_sites - 1)
-        os += -J, "Adag", j, "A", j + 1
-        os += -J, "A", j, "Adag", j + 1
+        os += J, "Adag", j, "A", j + 1
+        os += J, "A", j, "Adag", j + 1
     end
 
     H = MPO(os, s)

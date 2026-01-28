@@ -36,8 +36,8 @@ end
 
 
 function build_hopping_hamiltonian(site_index::Int, J::Float64, s)
-    h = -J * op("Adag", s[site_index]) * op("A", s[site_index + 1])
-    h += -J * op("A", s[site_index]) * op("Adag", s[site_index + 1])
+    h = J * op("Adag", s[site_index]) * op("A", s[site_index + 1])
+    h += J * op("A", s[site_index]) * op("Adag", s[site_index + 1])
     return h
 end
 

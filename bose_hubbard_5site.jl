@@ -23,8 +23,8 @@ let
         os = OpSum()
         # Hopping terms
         for j in 1:N_sites-1
-            os += -J_val, "Adag", j, "A", j+1
-            os += -J_val, "A", j, "Adag", j+1
+            os += J_val, "Adag", j, "A", j+1
+            os += J_val, "A", j, "Adag", j+1
         end
         # On-site interaction terms
         for j in 1:N_sites
