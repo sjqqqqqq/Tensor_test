@@ -12,7 +12,7 @@ using Printf
 using Random
 using Optim
 
-include("BM_fuctions.jl")
+include("BM_functions.jl")
 
 # ============================================================================
 # Trotter propagation utilities
