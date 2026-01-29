@@ -1,19 +1,18 @@
 """
 GRAPE (Gradient Ascent Pulse Engineering) for MPS quantum optimal control.
 
-Goal: Maximize fidelity F = |⟨ψ_target|ψ(T)⟩|²
-Starting from: |N,0,0⟩ (all particles on first site)
-Target: NOON state (|N,0,0⟩ + |0,0,N⟩)/√2
+Optimizes control pulses (J, U, Δ) to maximize fidelity F = |⟨ψ_target|ψ(T)⟩|²
+for a Bose-Hubbard system using Matrix Product States (MPS).
 
-This implements the same GRAPE algorithm as BM_GRAPE_trotter.jl but uses
-MPS (Matrix Product States) instead of state vectors for scalability.
+Default setup:
+- Initial state: |N,0,...,0⟩ (all particles on first site)
+- Target state: NOON state (|N,0,...,0⟩ + |0,...,0,N⟩)/√2
 
-Gradient formula:
-∂F/∂θ_n = 2·Re[⟨ψ_target|ψ(T)⟩* · ⟨χ_{n+1}|(-i·dt·∂H/∂θ)|ψ_n⟩]
+Hamiltonian:
+- H1 (on-site): U·N(N-1) + Δ·(i-center)·N
+- H2 (hopping): J·(A†_i·A_{i+1} + h.c.)
 
-where:
-- ψ_n = forward state after n-1 gates (before gate n)
-- χ_{n+1} = backward costate = U†_{n+1}...U†_T |ψ_target⟩
+Uses 2nd-order Trotter decomposition with analytical gradients.
 """
 
 using ITensors, ITensorMPS
@@ -21,6 +20,7 @@ using LinearAlgebra
 using Random
 using Printf
 using Optim
+using Statistics
 
 # ============================================================================
 # Configuration
@@ -29,107 +29,67 @@ using Optim
 struct GRAPEConfig
     n_sites::Int
     n_particles::Int
-    n_steps::Int          # Number of time steps
-    dt::Float64           # Time step size
-    cutoff::Float64       # MPS truncation cutoff
+    n_steps::Int
+    dt::Float64
+    cutoff::Float64
     max_iterations::Int
-    tolerance::Float64    # Convergence tolerance (infidelity threshold)
+    tolerance::Float64
 end
 
 # ============================================================================
-# Hamiltonian building functions
+# Hamiltonian construction
 # ============================================================================
 
-"""Build on-site Hamiltonian H1 = U·N(N-1) + Δ·(i-center)·N"""
+"""Build on-site Hamiltonian: H1 = U·N(N-1) + Δ·(i-center)·N"""
 function build_H1(site_idx::Int, U::Float64, Δ::Float64, s, n_sites::Int)
     center = (n_sites + 1) / 2
-    h = U * op("N * N", s[site_idx]) + U * (-1.0) * op("N", s[site_idx])
+    h = U * op("N * N", s[site_idx]) - U * op("N", s[site_idx])
     h += Δ * (site_idx - center) * op("N", s[site_idx])
     return h
 end
 
-"""Build hopping Hamiltonian H2 = J·(A†_i·A_{i+1} + h.c.)"""
+"""Build hopping Hamiltonian: H2 = J·(A†_i·A_{i+1} + h.c.)"""
 function build_H2(site_idx::Int, J::Float64, s)
-    h = J * op("Adag", s[site_idx]) * op("A", s[site_idx + 1])
-    h += J * op("A", s[site_idx]) * op("Adag", s[site_idx + 1])
-    return h
+    return J * op("Adag", s[site_idx]) * op("A", s[site_idx + 1]) +
+           J * op("A", s[site_idx]) * op("Adag", s[site_idx + 1])
 end
-
-# ============================================================================
-# Hamiltonian gradients (∂H/∂θ)
-# ============================================================================
 
 """∂H1/∂U = N(N-1)"""
 function grad_H1_U(site_idx::Int, s)
-    return op("N * N", s[site_idx]) + (-1.0) * op("N", s[site_idx])
+    return op("N * N", s[site_idx]) - op("N", s[site_idx])
 end
 
 """∂H1/∂Δ = (i - center)·N"""
 function grad_H1_Δ(site_idx::Int, s, n_sites::Int)
-    center = (n_sites + 1) / 2
-    return (site_idx - center) * op("N", s[site_idx])
+    return (site_idx - (n_sites + 1) / 2) * op("N", s[site_idx])
 end
 
 """∂H2/∂J = A†_i·A_{i+1} + A_i·A†_{i+1}"""
 function grad_H2_J(site_idx::Int, s)
-    h = op("Adag", s[site_idx]) * op("A", s[site_idx + 1])
-    h += op("A", s[site_idx]) * op("Adag", s[site_idx + 1])
-    return h
+    return op("Adag", s[site_idx]) * op("A", s[site_idx + 1]) +
+           op("A", s[site_idx]) * op("Adag", s[site_idx + 1])
 end
 
 # ============================================================================
 # Gate construction
 # ============================================================================
 
-"""Build 2nd order Trotter gates for one time step."""
-function make_trotter_gates(J::Float64, U::Float64, Δ::Float64, dt::Float64,
-                            s, n_sites::Int)
-    gates = ITensor[]
-
-    # First half: exp(-i·H1·dt/2) for all sites
-    for j in 1:n_sites
-        hj = build_H1(j, U, Δ, s, n_sites)
-        push!(gates, exp(-im * dt/2 * hj))
-    end
-
-    # Middle: exp(-i·H2·dt) for all bonds
-    for j in 1:(n_sites - 1)
-        hj = build_H2(j, J, s)
-        push!(gates, exp(-im * dt * hj))
-    end
-
-    # Second half: exp(-i·H1·dt/2) for all sites
-    for j in 1:n_sites
-        hj = build_H1(j, U, Δ, s, n_sites)
-        push!(gates, exp(-im * dt/2 * hj))
-    end
-
-    return gates
+"""Build H1 gates for all sites."""
+function make_H1_gates(U::Float64, Δ::Float64, dt_factor::Float64, s, n_sites::Int)
+    return [exp(-im * dt_factor * build_H1(j, U, Δ, s, n_sites)) for j in 1:n_sites]
 end
 
-"""Build adjoint gates for backward propagation (reverse order)."""
-function make_trotter_gates_adjoint(J::Float64, U::Float64, Δ::Float64, dt::Float64,
-                                    s, n_sites::Int)
+"""Build H2 gates for all bonds."""
+function make_H2_gates(J::Float64, dt::Float64, s, n_sites::Int)
+    return [exp(-im * dt * build_H2(j, J, s)) for j in 1:(n_sites-1)]
+end
+
+"""Build 2nd order Trotter gates: exp(-iH1·dt/2)·exp(-iH2·dt)·exp(-iH1·dt/2)"""
+function make_trotter_gates(J::Float64, U::Float64, Δ::Float64, dt::Float64, s, n_sites::Int)
     gates = ITensor[]
-
-    # Reverse of forward: second half first
-    for j in n_sites:-1:1
-        hj = build_H1(j, U, Δ, s, n_sites)
-        push!(gates, exp(+im * dt/2 * hj))
-    end
-
-    # Middle (reversed)
-    for j in (n_sites - 1):-1:1
-        hj = build_H2(j, J, s)
-        push!(gates, exp(+im * dt * hj))
-    end
-
-    # First half (reversed)
-    for j in n_sites:-1:1
-        hj = build_H1(j, U, Δ, s, n_sites)
-        push!(gates, exp(+im * dt/2 * hj))
-    end
-
+    append!(gates, make_H1_gates(U, Δ, dt/2, s, n_sites))
+    append!(gates, make_H2_gates(J, dt, s, n_sites))
+    append!(gates, make_H1_gates(U, Δ, dt/2, s, n_sites))
     return gates
 end
 
@@ -137,553 +97,456 @@ end
 # State initialization
 # ============================================================================
 
-"""Create initial state: all particles on first site |N,0,...,0⟩"""
+"""Create initial state: |N,0,...,0⟩"""
 function make_initial_state(s, config::GRAPEConfig)
-    state = ["$(config.n_particles)"]
-    for _ in 2:config.n_sites
-        push!(state, "0")
-    end
+    state = vcat(["$(config.n_particles)"], fill("0", config.n_sites - 1))
     return MPS(s, state)
 end
 
 """Create NOON target state: (|N,0,...,0⟩ + |0,...,0,N⟩)/√2"""
 function make_noon_state(s, config::GRAPEConfig)
     n = config.n_particles
+    state1 = vcat(["$n"], fill("0", config.n_sites - 1))
+    state2 = vcat(fill("0", config.n_sites - 1), ["$n"])
 
-    # |N,0,...,0⟩
-    state1 = ["$n"]
-    for _ in 2:config.n_sites
-        push!(state1, "0")
-    end
     psi1 = MPS(s, state1)
-
-    # |0,...,0,N⟩
-    state2 = String[]
-    for _ in 1:(config.n_sites - 1)
-        push!(state2, "0")
-    end
-    push!(state2, "$n")
     psi2 = MPS(s, state2)
 
-    # Superposition
     noon = add(psi1, psi2; cutoff=config.cutoff)
     noon ./= sqrt(2)
     normalize!(noon)
-
     return noon
 end
 
 # ============================================================================
-# MPS Propagation functions
+# MPS propagation
 # ============================================================================
 
-"""
-Forward propagation: evolve initial state through all time steps.
-Returns array of states [ψ_0, ψ_1, ..., ψ_{n_steps}] where ψ_n is state AFTER step n.
-"""
-function forward_propagate_store(psi0::MPS, J_vec::Vector{Float64}, U_vec::Vector{Float64},
-                                  Δ_vec::Vector{Float64}, s, config::GRAPEConfig)
-    n_steps = length(J_vec)
-    psi_states = Vector{MPS}(undef, n_steps)
-
-    psi = copy(psi0)
-    psi_states[1] = copy(psi)
-
-    for n in 1:n_steps-1
-        gates = make_trotter_gates(J_vec[n], U_vec[n], Δ_vec[n], config.dt,
-                                   s, config.n_sites)
-        psi = apply(gates, psi; cutoff=config.cutoff)
-        normalize!(psi)
-        psi_states[n+1] = copy(psi)
-    end
-
-    return psi_states
-end
-
-"""
-Forward propagation without storing intermediate states.
-Returns only the final state.
-"""
+"""Forward propagate without storing intermediate states."""
 function forward_propagate(psi0::MPS, J_vec::Vector{Float64}, U_vec::Vector{Float64},
                            Δ_vec::Vector{Float64}, s, config::GRAPEConfig)
-    n_steps = length(J_vec)
     psi = copy(psi0)
-
-    for n in 1:n_steps-1
-        gates = make_trotter_gates(J_vec[n], U_vec[n], Δ_vec[n], config.dt,
-                                   s, config.n_sites)
+    for n in 1:config.n_steps-1
+        gates = make_trotter_gates(J_vec[n], U_vec[n], Δ_vec[n], config.dt, s, config.n_sites)
         psi = apply(gates, psi; cutoff=config.cutoff)
         normalize!(psi)
     end
-
     return psi
 end
 
-"""
-Backward propagation: evolve target state backward through all time steps.
-Returns array of costates.
-"""
-function backward_propagate_store(chi_T::MPS, J_vec::Vector{Float64}, U_vec::Vector{Float64},
-                                   Δ_vec::Vector{Float64}, s, config::GRAPEConfig)
-    n_steps = length(J_vec)
-    chi_states = Vector{MPS}(undef, n_steps)
-
-    chi = copy(chi_T)
-    chi_states[n_steps] = copy(chi)
-
-    # Backward propagation uses adjoint of forward propagator
-    for n in n_steps-1:-1:1
-        gates = make_trotter_gates_adjoint(J_vec[n], U_vec[n], Δ_vec[n], config.dt,
-                                           s, config.n_sites)
-        chi = apply(gates, chi; cutoff=config.cutoff)
-        normalize!(chi)
-        chi_states[n] = copy(chi)
-    end
-
-    return chi_states
-end
-
-# ============================================================================
-# Gradient computation using numerical differentiation
-# ============================================================================
-
-"""
-Compute fidelity for given control parameters.
-"""
-function compute_fidelity_mps(psi0::MPS, psi_target::MPS, J_vec::Vector{Float64},
-                               U_vec::Vector{Float64}, Δ_vec::Vector{Float64},
-                               s, config::GRAPEConfig)
+"""Compute fidelity F = |⟨ψ_target|ψ(T)⟩|²"""
+function compute_fidelity(psi0::MPS, psi_target::MPS, J_vec::Vector{Float64},
+                          U_vec::Vector{Float64}, Δ_vec::Vector{Float64},
+                          s, config::GRAPEConfig)
     psi_final = forward_propagate(psi0, J_vec, U_vec, Δ_vec, s, config)
     return abs2(inner(psi_target, psi_final))
 end
 
+# ============================================================================
+# Expectation values for gradient computation
+# ============================================================================
+
+"""Compute ⟨χ|H|ψ⟩ for single-site operator H at site j."""
+function expect_single_site(chi::MPS, psi::MPS, H_op::ITensor, site_j::Int)
+    psi_H = copy(psi)
+    psi_H[site_j] = noprime(H_op * psi[site_j])
+    return inner(chi, psi_H)
+end
+
+"""Compute ⟨χ|H|ψ⟩ for two-site operator H at sites j, j+1."""
+function expect_two_site(chi::MPS, psi::MPS, H_op::ITensor, site_j::Int)
+    n = length(psi)
+    chi_orth = orthogonalize(chi, site_j)
+    psi_orth = orthogonalize(psi, site_j)
+
+    # Left environment
+    L = site_j == 1 ? ITensor(1.0) :
+        reduce((acc, i) -> acc * dag(chi_orth[i]) * psi_orth[i], 1:site_j-1; init=ITensor(1.0))
+
+    # Right environment
+    R = site_j + 1 == n ? ITensor(1.0) :
+        reduce((acc, i) -> acc * dag(chi_orth[i]) * psi_orth[i], n:-1:site_j+2; init=ITensor(1.0))
+
+    # Local contraction with operator
+    psi_local = psi_orth[site_j] * psi_orth[site_j + 1]
+    H_psi = noprime(H_op * psi_local)
+    chi_local = dag(chi_orth[site_j]) * dag(chi_orth[site_j + 1])
+
+    return scalar(L * chi_local * H_psi * R)
+end
+
+# ============================================================================
+# Analytical gradient computation
+# ============================================================================
+
 """
-Compute GRAPE gradients using numerical differentiation (finite differences).
-This is more robust for MPS with quantum number conservation.
+Forward propagation with gate-level state storage for gradient computation.
+Returns: (psi_before, psi_after_H1, psi_after_H2) arrays.
 """
-function compute_mps_gradients_numerical(psi0::MPS, psi_target::MPS,
-                                          J_vec::Vector{Float64}, U_vec::Vector{Float64},
-                                          Δ_vec::Vector{Float64}, s, config::GRAPEConfig;
-                                          ε::Float64=1e-5)
-    n_steps = length(J_vec)
+function forward_propagate_detailed(psi0::MPS, J_vec::Vector{Float64}, U_vec::Vector{Float64},
+                                     Δ_vec::Vector{Float64}, s, config::GRAPEConfig)
+    n_steps, n_sites, dt, cutoff = config.n_steps, config.n_sites, config.dt, config.cutoff
 
-    grad_J = zeros(n_steps)
-    grad_U = zeros(n_steps)
-    grad_Delta = zeros(n_steps)
+    psi_before = Vector{MPS}(undef, n_steps)
+    psi_after_H1 = Vector{MPS}(undef, n_steps)
+    psi_after_H2 = Vector{MPS}(undef, n_steps)
 
-    # Base fidelity
-    F0 = compute_fidelity_mps(psi0, psi_target, J_vec, U_vec, Δ_vec, s, config)
-
-    # Compute gradients using forward differences (faster than central differences)
+    psi = copy(psi0)
     for n in 1:n_steps-1
-        # J gradient
-        J_plus = copy(J_vec)
-        J_plus[n] += ε
-        F_J_plus = compute_fidelity_mps(psi0, psi_target, J_plus, U_vec, Δ_vec, s, config)
-        grad_J[n] = (F_J_plus - F0) / ε
+        psi_before[n] = copy(psi)
 
-        # U gradient
-        U_plus = copy(U_vec)
-        U_plus[n] += ε
-        F_U_plus = compute_fidelity_mps(psi0, psi_target, J_vec, U_plus, Δ_vec, s, config)
-        grad_U[n] = (F_U_plus - F0) / ε
+        # First H1 (dt/2)
+        psi = apply(make_H1_gates(U_vec[n], Δ_vec[n], dt/2, s, n_sites), psi; cutoff=cutoff)
+        normalize!(psi)
+        psi_after_H1[n] = copy(psi)
 
-        # Delta gradient
-        Delta_plus = copy(Δ_vec)
-        Delta_plus[n] += ε
-        F_Delta_plus = compute_fidelity_mps(psi0, psi_target, J_vec, U_vec, Delta_plus, s, config)
-        grad_Delta[n] = (F_Delta_plus - F0) / ε
+        # H2 (dt)
+        psi = apply(make_H2_gates(J_vec[n], dt, s, n_sites), psi; cutoff=cutoff)
+        normalize!(psi)
+        psi_after_H2[n] = copy(psi)
+
+        # Second H1 (dt/2)
+        psi = apply(make_H1_gates(U_vec[n], Δ_vec[n], dt/2, s, n_sites), psi; cutoff=cutoff)
+        normalize!(psi)
     end
 
-    return grad_J, grad_U, grad_Delta, F0
+    psi_before[n_steps] = copy(psi)
+    psi_after_H1[n_steps] = copy(psi)
+    psi_after_H2[n_steps] = copy(psi)
+
+    return psi_before, psi_after_H1, psi_after_H2
 end
 
 """
-Compute stochastic gradients - only compute for a random subset of time steps.
-Much faster for large n_steps.
+Backward propagation with gate-level state storage.
+Returns: (chi_after, chi_before_H2) arrays.
 """
-function compute_mps_gradients_stochastic(psi0::MPS, psi_target::MPS,
-                                           J_vec::Vector{Float64}, U_vec::Vector{Float64},
-                                           Δ_vec::Vector{Float64}, s, config::GRAPEConfig;
-                                           ε::Float64=1e-5, batch_size::Int=20)
-    n_steps = length(J_vec)
+function backward_propagate_detailed(chi_T::MPS, J_vec::Vector{Float64}, U_vec::Vector{Float64},
+                                      Δ_vec::Vector{Float64}, s, config::GRAPEConfig)
+    n_steps, n_sites, dt, cutoff = config.n_steps, config.n_sites, config.dt, config.cutoff
+
+    chi_after = Vector{MPS}(undef, n_steps)
+    chi_before_H2 = Vector{MPS}(undef, n_steps)
+
+    chi = copy(chi_T)
+    chi_after[n_steps] = copy(chi)
+    chi_before_H2[n_steps] = copy(chi)
+
+    for n in n_steps-1:-1:1
+        # Backward through second H1 (adjoint)
+        gates_H1_adj = [exp(+im * dt/2 * build_H1(j, U_vec[n], Δ_vec[n], s, n_sites))
+                        for j in n_sites:-1:1]
+        chi = apply(gates_H1_adj, chi; cutoff=cutoff)
+        normalize!(chi)
+        chi_before_H2[n+1] = copy(chi)
+
+        # Backward through H2 (adjoint)
+        gates_H2_adj = [exp(+im * dt * build_H2(j, J_vec[n], s)) for j in (n_sites-1):-1:1]
+        chi = apply(gates_H2_adj, chi; cutoff=cutoff)
+        normalize!(chi)
+
+        # Backward through first H1 (adjoint)
+        chi = apply(gates_H1_adj, chi; cutoff=cutoff)
+        normalize!(chi)
+        chi_after[n] = copy(chi)
+    end
+    chi_before_H2[1] = copy(chi)
+
+    return chi_after, chi_before_H2
+end
+
+"""
+Compute analytical GRAPE gradients.
+
+Uses the formula: ∂F/∂θ = 2·Re[⟨target|ψ(T)⟩* · ⟨χ|(-i·dt·∂H/∂θ)|ψ⟩]
+with proper Trotter decomposition handling.
+"""
+function compute_gradients_analytical(psi0::MPS, psi_target::MPS,
+                                       J_vec::Vector{Float64}, U_vec::Vector{Float64},
+                                       Δ_vec::Vector{Float64}, s, config::GRAPEConfig)
+    n_steps, n_sites, dt = config.n_steps, config.n_sites, config.dt
 
     grad_J = zeros(n_steps)
     grad_U = zeros(n_steps)
-    grad_Delta = zeros(n_steps)
+    grad_Δ = zeros(n_steps)
 
-    # Base fidelity
-    F0 = compute_fidelity_mps(psi0, psi_target, J_vec, U_vec, Δ_vec, s, config)
+    # Forward and backward propagation
+    psi_before, psi_after_H1, psi_after_H2 = forward_propagate_detailed(
+        psi0, J_vec, U_vec, Δ_vec, s, config)
+    chi_after, chi_before_H2 = backward_propagate_detailed(
+        psi_target, J_vec, U_vec, Δ_vec, s, config)
 
-    # Sample random subset of time steps
-    indices = randperm(n_steps - 1)[1:min(batch_size, n_steps - 1)]
+    overlap = inner(psi_target, psi_before[n_steps])
+    F = abs2(overlap)
 
-    # Compute gradients only for sampled indices
-    for n in indices
-        # J gradient
-        J_plus = copy(J_vec)
-        J_plus[n] += ε
-        F_J_plus = compute_fidelity_mps(psi0, psi_target, J_plus, U_vec, Δ_vec, s, config)
-        grad_J[n] = (F_J_plus - F0) / ε
-
-        # U gradient
-        U_plus = copy(U_vec)
-        U_plus[n] += ε
-        F_U_plus = compute_fidelity_mps(psi0, psi_target, J_vec, U_plus, Δ_vec, s, config)
-        grad_U[n] = (F_U_plus - F0) / ε
-
-        # Delta gradient
-        Delta_plus = copy(Δ_vec)
-        Delta_plus[n] += ε
-        F_Delta_plus = compute_fidelity_mps(psi0, psi_target, J_vec, U_vec, Delta_plus, s, config)
-        grad_Delta[n] = (F_Delta_plus - F0) / ε
-    end
-
-    # Scale gradients to account for sampling (approximate full gradient)
-    scale = (n_steps - 1) / length(indices)
-    grad_J .*= scale
-    grad_U .*= scale
-    grad_Delta .*= scale
-
-    return grad_J, grad_U, grad_Delta, F0
-end
-
-# ============================================================================
-# GRAPE optimization with L-BFGS
-# ============================================================================
-
-"""
-GRAPE optimization with Trotter propagation using L-BFGS (MPS version).
-
-Parameters:
-- s: Site indices
-- config: GRAPE configuration
-- J0, U0, Delta0: Initial control pulses
-- verbose: Print progress
-
-Returns optimized control pulses and final fidelity.
-"""
-function grape_mps_optimize(s, config::GRAPEConfig;
-                            J0=nothing, U0=nothing, Delta0=nothing,
-                            verbose=true)
-    n_steps = config.n_steps
-
-    # Initialize controls
-    J_ctrl = isnothing(J0) ? 0.1 * ones(n_steps) : copy(J0)
-    U_ctrl = isnothing(U0) ? 0.01 * ones(n_steps) : copy(U0)
-    Delta_ctrl = isnothing(Delta0) ? zeros(n_steps) : copy(Delta0)
-
-    # Create initial and target states
-    psi0 = make_initial_state(s, config)
-    psi_target = make_noon_state(s, config)
-
-    # Pack controls into single vector for optimizer: [J; U; Delta]
-    function pack_controls(J, U, Delta)
-        return vcat(J, U, Delta)
-    end
-
-    function unpack_controls(x)
-        J = x[1:n_steps]
-        U = x[n_steps+1:2*n_steps]
-        Delta = x[2*n_steps+1:3*n_steps]
-        return J, U, Delta
-    end
-
-    # Objective function: minimize infidelity (1 - fidelity)
-    function objective(x)
-        J, U, Delta = unpack_controls(x)
-        fidelity = compute_fidelity_mps(psi0, psi_target, J, U, Delta, s, config)
-        return 1.0 - fidelity  # Minimize infidelity
-    end
-
-    # Gradient function using numerical differentiation
-    function gradient!(g, x)
-        J, U, Delta = unpack_controls(x)
-
-        # Compute gradients numerically
-        grad_J, grad_U, grad_Delta, _ = compute_mps_gradients_numerical(
-            psi0, psi_target, J, U, Delta, s, config)
-
-        # Negate for infidelity gradient (we're minimizing 1-F)
-        g[1:n_steps] .= -grad_J
-        g[n_steps+1:2*n_steps] .= -grad_U
-        g[2*n_steps+1:3*n_steps] .= -grad_Delta
-    end
-
-    # Initial packed controls
-    x0 = pack_controls(J_ctrl, U_ctrl, Delta_ctrl)
-
-    # Callback for progress
-    iter_count = Ref(0)
-    function callback(state)
-        iter_count[] += 1
-        if verbose && (iter_count[] % 10 == 1 || iter_count[] == 1)
-            fidelity = 1.0 - state.value
-            @printf("Iter %4d: fidelity = %.8f, infidelity = %.2e\n",
-                    iter_count[], fidelity, state.value)
+    for n in 1:n_steps-1
+        # J gradient (H2 gate)
+        for j in 1:(n_sites-1)
+            expect_val = expect_two_site(chi_before_H2[n+1], psi_after_H2[n], grad_H2_J(j, s), j)
+            grad_J[n] += 2.0 * real(conj(overlap) * (-im * dt) * expect_val)
         end
-        return false
+
+        # U and Δ gradients (both H1 gates)
+        chi_first, psi_first = chi_before_H2[n+1], psi_after_H1[n]
+        chi_second, psi_second = chi_after[n+1], psi_before[n+1]
+
+        for j in 1:n_sites
+            # First H1 (dt/2)
+            expect_U = expect_single_site(chi_first, psi_first, grad_H1_U(j, s), j)
+            expect_Δ = expect_single_site(chi_first, psi_first, grad_H1_Δ(j, s, n_sites), j)
+            grad_U[n] += 2.0 * real(conj(overlap) * (-im * dt/2) * expect_U)
+            grad_Δ[n] += 2.0 * real(conj(overlap) * (-im * dt/2) * expect_Δ)
+
+            # Second H1 (dt/2)
+            expect_U = expect_single_site(chi_second, psi_second, grad_H1_U(j, s), j)
+            expect_Δ = expect_single_site(chi_second, psi_second, grad_H1_Δ(j, s, n_sites), j)
+            grad_U[n] += 2.0 * real(conj(overlap) * (-im * dt/2) * expect_U)
+            grad_Δ[n] += 2.0 * real(conj(overlap) * (-im * dt/2) * expect_Δ)
+        end
     end
 
-    # Run L-BFGS optimization
-    result = optimize(
-        objective,
-        gradient!,
-        x0,
-        LBFGS(m=20),
-        Optim.Options(
-            iterations=config.max_iterations,
-            g_tol=config.tolerance * 1e-2,
-            f_reltol=config.tolerance * 1e-2,
-            show_trace=false,
-            callback=callback
-        )
-    )
+    return grad_J, grad_U, grad_Δ, F
+end
 
-    # Extract optimized controls
-    x_opt = Optim.minimizer(result)
-    J_opt, U_opt, Delta_opt = unpack_controls(x_opt)
+"""Compute numerical gradients using finite differences."""
+function compute_gradients_numerical(psi0::MPS, psi_target::MPS,
+                                      J_vec::Vector{Float64}, U_vec::Vector{Float64},
+                                      Δ_vec::Vector{Float64}, s, config::GRAPEConfig;
+                                      ε::Float64=1e-6)
+    n_steps = config.n_steps
+    grad_J, grad_U, grad_Δ = zeros(n_steps), zeros(n_steps), zeros(n_steps)
 
-    # Final fidelity
-    final_fidelity = 1.0 - Optim.minimum(result)
+    F0 = compute_fidelity(psi0, psi_target, J_vec, U_vec, Δ_vec, s, config)
 
-    if verbose
-        println("\nL-BFGS completed:")
-        println("  Iterations: $(Optim.iterations(result))")
-        println("  Converged: $(Optim.converged(result))")
+    for n in 1:n_steps-1
+        for (grad, vec, name) in [(grad_J, J_vec, :J), (grad_U, U_vec, :U), (grad_Δ, Δ_vec, :Δ)]
+            vec_plus = copy(vec)
+            vec_plus[n] += ε
+            F_plus = if name == :J
+                compute_fidelity(psi0, psi_target, vec_plus, U_vec, Δ_vec, s, config)
+            elseif name == :U
+                compute_fidelity(psi0, psi_target, J_vec, vec_plus, Δ_vec, s, config)
+            else
+                compute_fidelity(psi0, psi_target, J_vec, U_vec, vec_plus, s, config)
+            end
+            grad[n] = (F_plus - F0) / ε
+        end
     end
 
-    return J_opt, U_opt, Delta_opt, final_fidelity
+    return grad_J, grad_U, grad_Δ, F0
 end
 
 # ============================================================================
-# Analysis functions
+# Optimization
 # ============================================================================
 
 """
-Analyze MPS state to check if it's a NOON state.
+GRAPE optimization using gradient descent with momentum.
+
+Returns: (J_opt, U_opt, Δ_opt, final_fidelity)
 """
-function analyze_noon_state(psi::MPS, s, config::GRAPEConfig)
-    n = config.n_particles
-
-    # |N,0,...,0⟩
-    state1 = ["$n"]
-    for _ in 2:config.n_sites
-        push!(state1, "0")
-    end
-    psi_left = MPS(s, state1)
-
-    # |0,...,0,N⟩
-    state2 = String[]
-    for _ in 1:(config.n_sites - 1)
-        push!(state2, "0")
-    end
-    push!(state2, "$n")
-    psi_right = MPS(s, state2)
-
-    # Compute overlaps
-    prob_left = abs2(inner(psi_left, psi))
-    prob_right = abs2(inner(psi_right, psi))
-
-    # NOON state fidelity
-    target = make_noon_state(s, config)
-    fidelity = abs2(inner(target, psi))
-
-    return (prob_left=prob_left, prob_right=prob_right, fidelity=fidelity)
-end
-
-# ============================================================================
-# Main execution: Run GRAPE optimization with MPS
-# ============================================================================
-
-"""
-Gradient descent with momentum and adaptive learning rate.
-Uses stochastic gradients for faster computation with many time steps.
-"""
-function grape_mps_simple(s, config::GRAPEConfig;
-                          J0=nothing, U0=nothing, Delta0=nothing,
-                          learning_rate=0.1, batch_size=20, verbose=true)
+function grape_optimize(s, config::GRAPEConfig;
+                        J0=nothing, U0=nothing, Δ0=nothing,
+                        learning_rate=0.1, momentum=0.9,
+                        use_analytical=true, verbose=true)
     n_steps = config.n_steps
 
     # Initialize controls
     J = isnothing(J0) ? 0.5 * ones(n_steps) : copy(J0)
     U = isnothing(U0) ? 0.1 * ones(n_steps) : copy(U0)
-    Delta = isnothing(Delta0) ? zeros(n_steps) : copy(Delta0)
+    Δ = isnothing(Δ0) ? zeros(n_steps) : copy(Δ0)
 
-    # Create initial and target states
     psi0 = make_initial_state(s, config)
     psi_target = make_noon_state(s, config)
 
     best_fidelity = 0.0
-    best_J, best_U, best_Delta = copy(J), copy(U), copy(Delta)
+    best_J, best_U, best_Δ = copy(J), copy(U), copy(Δ)
+    v_J, v_U, v_Δ = zeros(n_steps), zeros(n_steps), zeros(n_steps)
+    lr, prev_fidelity = learning_rate, 0.0
 
-    # Momentum terms
-    momentum = 0.9
-    v_J = zeros(n_steps)
-    v_U = zeros(n_steps)
-    v_Delta = zeros(n_steps)
-
-    lr = learning_rate
-    prev_fidelity = 0.0
-
-    # Use stochastic gradients if n_steps is large
-    use_stochastic = (n_steps > 30)
-    if verbose && use_stochastic
-        println("Using stochastic gradients with batch_size=$batch_size")
-    end
+    verbose && println("Using $(use_analytical ? "analytical" : "numerical") gradients")
 
     for iter in 1:config.max_iterations
-        # Compute gradients (stochastic for large n_steps)
-        if use_stochastic
-            grad_J, grad_U, grad_Delta, fidelity = compute_mps_gradients_stochastic(
-                psi0, psi_target, J, U, Delta, s, config; batch_size=batch_size)
-        else
-            grad_J, grad_U, grad_Delta, fidelity = compute_mps_gradients_numerical(
-                psi0, psi_target, J, U, Delta, s, config)
-        end
+        grad_J, grad_U, grad_Δ, fidelity = use_analytical ?
+            compute_gradients_analytical(psi0, psi_target, J, U, Δ, s, config) :
+            compute_gradients_numerical(psi0, psi_target, J, U, Δ, s, config)
 
-        # Track best
         if fidelity > best_fidelity
             best_fidelity = fidelity
-            best_J, best_U, best_Delta = copy(J), copy(U), copy(Delta)
+            best_J, best_U, best_Δ = copy(J), copy(U), copy(Δ)
         end
 
-        # Print progress
-        if verbose && (iter == 1 || iter % 10 == 0)
-            @printf("Iter %3d: fidelity = %.6f (best = %.6f, lr = %.4f)\n",
-                    iter, fidelity, best_fidelity, lr)
-        end
+        verbose && (iter == 1 || iter % 10 == 0) &&
+            @printf("Iter %3d: fidelity = %.6f (best = %.6f)\n", iter, fidelity, best_fidelity)
 
-        # Check convergence
-        if best_fidelity > 1.0 - config.tolerance
-            if verbose
-                println("Converged!")
-            end
-            break
-        end
+        best_fidelity > 1.0 - config.tolerance && (verbose && println("Converged!"); break)
 
         # Adaptive learning rate
         if iter > 1
-            if fidelity < prev_fidelity - 0.05
-                lr *= 0.7  # Reduce if fidelity dropped
-            elseif fidelity > prev_fidelity
-                lr = min(lr * 1.02, learning_rate)  # Slowly increase
-            end
+            lr = fidelity < prev_fidelity - 0.05 ? lr * 0.7 :
+                 fidelity > prev_fidelity ? min(lr * 1.02, learning_rate) : lr
         end
         prev_fidelity = fidelity
 
         # Momentum update
-        v_J = momentum .* v_J .+ lr .* grad_J
-        v_U = momentum .* v_U .+ lr .* grad_U
-        v_Delta = momentum .* v_Delta .+ lr .* grad_Delta
+        v_J .= momentum .* v_J .+ lr .* grad_J
+        v_U .= momentum .* v_U .+ lr .* grad_U
+        v_Δ .= momentum .* v_Δ .+ lr .* grad_Δ
 
-        J .+= v_J
+        J .+= v_J; J .= max.(J, 0.01)
         U .+= v_U
-        Delta .+= v_Delta
-
-        # Keep J positive
-        J .= max.(J, 0.01)
+        Δ .+= v_Δ
     end
 
-    if verbose
-        println("Best fidelity: $best_fidelity")
-    end
-
-    return best_J, best_U, best_Delta, best_fidelity
+    verbose && println("Best fidelity: $best_fidelity")
+    return best_J, best_U, best_Δ, best_fidelity
 end
 
+"""GRAPE optimization using L-BFGS."""
+function grape_optimize_lbfgs(s, config::GRAPEConfig;
+                              J0=nothing, U0=nothing, Δ0=nothing,
+                              use_analytical=true, verbose=true)
+    n_steps = config.n_steps
+
+    J = isnothing(J0) ? 0.1 * ones(n_steps) : copy(J0)
+    U = isnothing(U0) ? 0.01 * ones(n_steps) : copy(U0)
+    Δ = isnothing(Δ0) ? zeros(n_steps) : copy(Δ0)
+
+    psi0 = make_initial_state(s, config)
+    psi_target = make_noon_state(s, config)
+
+    pack(J, U, Δ) = vcat(J, U, Δ)
+    unpack(x) = (x[1:n_steps], x[n_steps+1:2n_steps], x[2n_steps+1:3n_steps])
+
+    objective(x) = 1.0 - compute_fidelity(psi0, psi_target, unpack(x)..., s, config)
+
+    function gradient!(g, x)
+        grad_J, grad_U, grad_Δ, _ = use_analytical ?
+            compute_gradients_analytical(psi0, psi_target, unpack(x)..., s, config) :
+            compute_gradients_numerical(psi0, psi_target, unpack(x)..., s, config)
+        g[1:n_steps] .= -grad_J
+        g[n_steps+1:2n_steps] .= -grad_U
+        g[2n_steps+1:3n_steps] .= -grad_Δ
+    end
+
+    iter_count = Ref(0)
+    callback(state) = (iter_count[] += 1;
+        verbose && iter_count[] % 10 == 1 && @printf("Iter %4d: fidelity = %.8f\n",
+            iter_count[], 1.0 - state.value);
+        false)
+
+    result = optimize(objective, gradient!, pack(J, U, Δ), LBFGS(m=20),
+        Optim.Options(iterations=config.max_iterations, g_tol=config.tolerance*1e-2,
+                      f_reltol=config.tolerance*1e-2, callback=callback))
+
+    J_opt, U_opt, Δ_opt = unpack(Optim.minimizer(result))
+    final_fidelity = 1.0 - Optim.minimum(result)
+
+    verbose && println("\nL-BFGS: $(Optim.iterations(result)) iterations, converged=$(Optim.converged(result))")
+    return J_opt, U_opt, Δ_opt, final_fidelity
+end
+
+# ============================================================================
+# Analysis
+# ============================================================================
+
+"""Analyze if state is a NOON state."""
+function analyze_noon_state(psi::MPS, s, config::GRAPEConfig)
+    n = config.n_particles
+
+    psi_left = MPS(s, vcat(["$n"], fill("0", config.n_sites - 1)))
+    psi_right = MPS(s, vcat(fill("0", config.n_sites - 1), ["$n"]))
+    target = make_noon_state(s, config)
+
+    return (prob_left=abs2(inner(psi_left, psi)),
+            prob_right=abs2(inner(psi_right, psi)),
+            fidelity=abs2(inner(target, psi)))
+end
+
+"""Test analytical vs numerical gradients."""
+function test_gradients(s, config::GRAPEConfig; verbose=true)
+    Random.seed!(123)
+    n_steps = config.n_steps
+
+    psi0 = make_initial_state(s, config)
+    psi_target = make_noon_state(s, config)
+
+    J = 0.5 .+ 0.2 * randn(n_steps)
+    U = 0.1 .+ 0.05 * randn(n_steps)
+    Δ = 0.2 * randn(n_steps)
+
+    grad_ana = compute_gradients_analytical(psi0, psi_target, J, U, Δ, s, config)
+    grad_num = compute_gradients_numerical(psi0, psi_target, J, U, Δ, s, config)
+
+    idx = 1:n_steps-1
+    correlations = [cor(grad_ana[i][idx], grad_num[i][idx]) for i in 1:3]
+
+    if verbose
+        println("Gradient test (dt = $(config.dt)):")
+        @printf("  Correlations: J=%.4f, U=%.4f, Δ=%.4f\n", correlations...)
+        @printf("  Fidelity: analytical=%.6f, numerical=%.6f\n", grad_ana[4], grad_num[4])
+    end
+
+    return correlations
+end
+
+# ============================================================================
+# Main
+# ============================================================================
+
 function main()
-    # System parameters
-    N = 3  # Number of bosons
-    k = 3  # Number of sites
-    T = 10.0
-    num_steps = 101  # More steps for finer time resolution
+    N, k, T = 3, 3, 10.0
+    num_steps = 51
     dt = T / (num_steps - 1)
 
     println("="^60)
     println("GRAPE Optimal Control (MPS) for Bose-Hubbard Model")
     println("="^60)
-    println("N = $N bosons, k = $k sites")
-    println("Using 2nd-order Trotter with MPS representation")
-    println("Time: T = $T, steps = $num_steps, dt = $dt")
-    println("Note: Using numerical gradients with simple gradient descent")
+    println("N=$N bosons, k=$k sites, T=$T, dt=$(@sprintf("%.3f", dt))")
 
-    # Configuration
-    config = GRAPEConfig(
-        k,          # n_sites
-        N,          # n_particles
-        num_steps,  # n_steps
-        dt,         # dt
-        1e-8,       # cutoff
-        500,        # max_iterations (more for stochastic gradients)
-        1e-3        # tolerance
-    )
+    config = GRAPEConfig(k, N, num_steps, dt, 1e-8, 300, 1e-3)
+    s = siteinds("Boson", k; dim=N+1, conserve_qns=true)
 
-    # Create site indices
-    s = siteinds("Boson", config.n_sites; dim=config.n_particles + 1, conserve_qns=true)
+    # Test gradients
+    println("\nGradient verification:")
+    test_gradients(s, config)
 
-    # Initial and target states
+    # Run optimization
     psi0 = make_initial_state(s, config)
     psi_target = make_noon_state(s, config)
 
-    println("\nInitial state: |$(config.n_particles),0,0⟩")
-    println("Target state: NOON state (|$(config.n_particles),0,0⟩ + |0,0,$(config.n_particles)⟩)/√2")
-    println("Initial fidelity: $(abs2(inner(psi_target, psi0)))")
-
-    # Initial guess for controls
-    println("\nStarting GRAPE optimization with MPS...")
-    println("-"^60)
+    println("\n" * "="^60)
+    println("Optimization")
+    println("="^60)
+    @printf("Initial fidelity: %.6f\n\n", abs2(inner(psi_target, psi0)))
 
     Random.seed!(42)
-    t_arr = collect(range(0, T, length=num_steps))
-    J0 = 1.0 .+ 0.3 * sin.(2π * t_arr / T) .+ 0.1 * randn(num_steps)
-    U0 = 0.1 .+ 0.05 * cos.(2π * t_arr / T) .+ 0.02 * randn(num_steps)
-    Delta0 = 0.3 * sin.(4π * t_arr / T) .+ 0.05 * randn(num_steps)
+    t = range(0, T, length=num_steps)
+    J0 = 1.0 .+ 0.3 * sin.(2π * t / T) .+ 0.1 * randn(num_steps)
+    U0 = 0.1 .+ 0.05 * cos.(2π * t / T) .+ 0.02 * randn(num_steps)
+    Δ0 = 0.3 * sin.(4π * t / T) .+ 0.05 * randn(num_steps)
 
-    # Run GRAPE optimization with stochastic gradient descent + momentum
-    J_opt, U_opt, Delta_opt, final_fidelity = grape_mps_simple(
-        s, config;
-        J0=J0, U0=U0, Delta0=Delta0,
-        learning_rate=0.1,
-        batch_size=20,  # Compute gradients for 20 random time steps per iteration
-        verbose=true
-    )
+    J_opt, U_opt, Δ_opt, fidelity = grape_optimize(s, config; J0=J0, U0=U0, Δ0=Δ0)
 
-    println("-"^60)
-    @printf("Final fidelity: %.6f\n", final_fidelity)
+    println("\n" * "-"^60)
+    @printf("Final fidelity: %.6f\n", fidelity)
 
-    # Final state analysis
-    psi_final = forward_propagate(psi0, J_opt, U_opt, Delta_opt, s, config)
+    psi_final = forward_propagate(psi0, J_opt, U_opt, Δ_opt, s, config)
     result = analyze_noon_state(psi_final, s, config)
 
     println("\nFinal state analysis:")
-    @printf("  |⟨ψ_target|ψ_final⟩|² = %.6f\n", result.fidelity)
-    @printf("  |⟨%d,0,0|ψ_final⟩|² = %.6f\n", config.n_particles, result.prob_left)
-    @printf("  |⟨0,0,%d|ψ_final⟩|² = %.6f\n", config.n_particles, result.prob_right)
+    @printf("  P(|%d,0,0⟩) = %.6f\n", N, result.prob_left)
+    @printf("  P(|0,0,%d⟩) = %.6f\n", N, result.prob_right)
 
     # Save results
-    println("\nSaving results...")
-    open("J_opt_mps.txt", "w") do f
-        for val in J_opt
-            println(f, val)
-        end
+    for (name, data) in [("J_opt_mps.txt", J_opt), ("U_opt_mps.txt", U_opt), ("Delta_opt_mps.txt", Δ_opt)]
+        open(name, "w") do f; foreach(v -> println(f, v), data); end
     end
-    open("U_opt_mps.txt", "w") do f
-        for val in U_opt
-            println(f, val)
-        end
-    end
-    open("Delta_opt_mps.txt", "w") do f
-        for val in Delta_opt
-            println(f, val)
-        end
-    end
-    println("Control pulses saved to J_opt_mps.txt, U_opt_mps.txt, Delta_opt_mps.txt")
+    println("\nControl pulses saved.")
 
-    return J_opt, U_opt, Delta_opt, final_fidelity
+    return J_opt, U_opt, Δ_opt, fidelity
 end
 
-# Run if executed directly
 if abspath(PROGRAM_FILE) == @__FILE__
     main()
 end
