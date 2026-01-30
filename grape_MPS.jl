@@ -496,7 +496,7 @@ end
 
 function main()
     N, k, T = 3, 3, 10.0
-    num_steps = 51
+    num_steps = 101
     dt = T / (num_steps - 1)
 
     println("="^60)
@@ -526,7 +526,7 @@ function main()
     U0 = 0.1 .+ 0.05 * cos.(2π * t / T) .+ 0.02 * randn(num_steps)
     Δ0 = 0.3 * sin.(4π * t / T) .+ 0.05 * randn(num_steps)
 
-    J_opt, U_opt, Δ_opt, fidelity = grape_optimize(s, config; J0=J0, U0=U0, Δ0=Δ0)
+    J_opt, U_opt, Δ_opt, fidelity = grape_optimize(s, config; J0=J0, U0=U0, Δ0=Δ0, use_analytical=false)
 
     println("\n" * "-"^60)
     @printf("Final fidelity: %.6f\n", fidelity)
