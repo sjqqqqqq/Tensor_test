@@ -1,5 +1,6 @@
 using ITensors, ITensorMPS
 using LinearAlgebra, Random, Printf
+using Optim
 
 # === Parameters ===
 const N, K, T = 10, 3, 10.0          # particles, sites, total time
@@ -96,31 +97,90 @@ function gradients(J, U, Δ)
     gJ, gU, gΔ, abs2(overlap)
 end
 
-# === Optimization ===
-function optimize(; maxiter=500, lr=0.1, μ=0.9, tol=1e-3)
+# === Pack/unpack parameters for Optim.jl ===
+function pack(J, U, Δ)
+    vcat(J, U, Δ)
+end
+
+function unpack(x)
+    J = x[1:NSTEPS]
+    U = x[NSTEPS+1:2NSTEPS]
+    Δ = x[2NSTEPS+1:3NSTEPS]
+    J, U, Δ
+end
+
+# === Cost function for Optim.jl (minimization) ===
+function loss(x)
+    J, U, Δ = unpack(x)
+    J = max.(J, 0.01)  # Enforce J > 0
+    psi_final = forward(copy(psi0), J, U, Δ)
+    fidelity = abs2(inner(psi_target, psi_final))
+    return 1.0 - fidelity  # Minimize infidelity
+end
+
+function loss_grad!(G, x)
+    J, U, Δ = unpack(x)
+    J = max.(J, 0.01)
+    gJ, gU, gΔ, _ = gradients(J, U, Δ)
+    # Negate gradient (maximization -> minimization)
+    G[1:NSTEPS] .= -gJ
+    G[NSTEPS+1:2NSTEPS] .= -gU
+    G[2NSTEPS+1:3NSTEPS] .= -gΔ
+end
+
+# === Optimization with L-BFGS ===
+function optimize(; maxiter=150, tol=1e-5, warmstart=nothing)
     Random.seed!(42)
     t = range(0, T, length=NSTEPS)
-    J = 1.0 .+ 0.3sin.(2π*t/T) .+ 0.1randn(NSTEPS)
-    U = 0.1 .+ 0.05cos.(2π*t/T) .+ 0.02randn(NSTEPS)
-    Δ = 0.3sin.(4π*t/T) .+ 0.05randn(NSTEPS)
 
-    vJ, vU, vΔ = zeros(NSTEPS), zeros(NSTEPS), zeros(NSTEPS)
-    best, best_params = 0.0, (copy(J), copy(U), copy(Δ))
-
-    for iter in 1:maxiter
-        gJ, gU, gΔ, F = gradients(J, U, Δ)
-
-        F > best && (best = F; best_params = (copy(J), copy(U), copy(Δ)))
-        (iter == 1 || iter % 10 == 0) && @printf("Iter %3d: F = %.6f (best = %.6f)\n", iter, F, best)
-        best > 1 - tol && (println("Converged!"); break)
-
-        vJ .= μ*vJ .+ lr*gJ; vU .= μ*vU .+ lr*gU; vΔ .= μ*vΔ .+ lr*gΔ
-        J .+= vJ; J .= max.(J, 0.01)
-        U .+= vU
-        Δ .+= vΔ
+    # Initialize or warm-start
+    if warmstart !== nothing
+        J0, U0, Δ0 = warmstart
+        println("Warm-starting from previous solution")
+    else
+        J0 = 1.0 .+ 0.3sin.(π*t/T)
+        U0 = 0.1 .* ones(NSTEPS)
+        Δ0 = 0.3sin.(2π*t/T)
     end
 
-    best_params..., best
+    x0 = pack(J0, U0, Δ0)
+    best_fid = Ref(0.0)
+    iter_count = Ref(0)
+
+    function callback(state)
+        iter_count[] += 1
+        fid = 1.0 - state.f_x
+        if fid > best_fid[]
+            best_fid[] = fid
+        end
+        if iter_count[] == 1 || iter_count[] % 10 == 0
+            @printf("Iter %3d: F = %.6f (best = %.6f)\n", iter_count[], fid, best_fid[])
+        end
+        # Early stopping if very high fidelity
+        fid > 0.999 && return true
+        return false
+    end
+
+    result = Optim.optimize(
+        loss, loss_grad!, x0,
+        LBFGS(m=30),
+        Optim.Options(
+            iterations=maxiter,
+            g_tol=1e-10,
+            f_reltol=tol,
+            show_trace=false,
+            callback=callback
+        )
+    )
+
+    J, U, Δ = unpack(Optim.minimizer(result))
+    J .= max.(J, 0.01)
+    fidelity = 1.0 - Optim.minimum(result)
+
+    println("\nL-BFGS converged: ", Optim.converged(result))
+    println("Iterations: ", Optim.iterations(result))
+
+    J, U, Δ, fidelity
 end
 
 # === Main ===
