@@ -1,9 +1,13 @@
+using Pkg
+# Pkg.activate(".")
+Pkg.activate("Tensor_test")
+
 using ITensors, ITensorMPS
 using LinearAlgebra, Random, Printf
 using Optim
 
 # === Parameters ===
-const N, K, T = 10, 3, 10.0          # particles, sites, total time
+const N, K, T = 20, 3, 10.0          # particles, sites, total time
 const NSTEPS = 101                   # time steps
 const DT = T / (NSTEPS - 1)
 const CUTOFF = 1e-8
