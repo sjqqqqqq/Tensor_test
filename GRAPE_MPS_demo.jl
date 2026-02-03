@@ -133,7 +133,7 @@ function loss_grad!(G, x)
 end
 
 # === Optimization with L-BFGS ===
-function optimize(; maxiter=150, tol=1e-5, warmstart=nothing)
+function optimize(; maxiter=300, tol=1e-5, warmstart=nothing)
     Random.seed!(42)
     t = range(0, T, length=NSTEPS)
 
