@@ -37,15 +37,14 @@ make_H2_gates(J, τ) = [exp(-im * τ * J * OP_H2[j]) for j in 1:K-1]
 
 # === Propagation ===
 function forward(psi, J, U, Δ; store=false)
-    states = store ? Vector{MPS}(undef, 3(NSTEPS-1)) : nothing
+    states = store ? Vector{MPS}(undef, 2(NSTEPS-1)) : nothing
     for n in 1:NSTEPS-1
         g1, g2 = make_H1_gates(U[n], Δ[n], DT/2), make_H2_gates(J[n], DT)
         psi = apply(g1, psi; cutoff=CUTOFF); normalize!(psi)
-        store && (states[3n-2] = copy(psi))
+        store && (states[2n-1] = copy(psi))
         psi = apply(g2, psi; cutoff=CUTOFF); normalize!(psi)
-        store && (states[3n-1] = copy(psi))
+        store && (states[2n] = copy(psi))
         psi = apply(g1, psi; cutoff=CUTOFF); normalize!(psi)
-        store && (states[3n] = copy(psi))
     end
     store ? (psi, states) : psi
 end
@@ -88,10 +87,10 @@ function gradients(J, U, Δ)
     for n in 1:NSTEPS-1
         # J gradient (H2 layer)
         for j in 1:K-1
-            gJ[n] += 2real(conj(overlap) * (-im*DT) * expect(bwd[2n], fwd[3n-1], OP_H2[j], j; twosite=true))
+            gJ[n] += 2real(conj(overlap) * (-im*DT) * expect(bwd[2n], fwd[2n], OP_H2[j], j; twosite=true))
         end
         # U, Δ gradients (both H1 layers)
-        for (chi, psi) in [(bwd[2n-1], fwd[3n-2]), (bwd[2n], fwd[3n-1])]
+        for (chi, psi) in [(bwd[2n-1], fwd[2n-1]), (bwd[2n], fwd[2n])]
             for j in 1:K
                 gU[n] += 2real(conj(overlap) * (-im*DT/2) * expect(chi, psi, OP_NNmN[j], j))
                 gΔ[n] += 2real(conj(overlap) * (-im*DT/2) * expect(chi, psi, (j-CENTER)*OP_N[j], j))
