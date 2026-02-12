@@ -21,12 +21,12 @@ end
 # Initialize simulation configuration
 const CONFIG = SimulationConfig(
     3,              # n_sites
-    100,            # n_particles
-    0.1,            # time_step
-    20.0,           # final_time
+    30,            # n_particles
+    0.01,            # time_step
+    10.0,           # final_time
     1E-8,           # cutoff
     "Data",         # output_dir
-    "MC_2nd_20"     # output_suffix
+    "MC2_3x30_10"     # output_suffix
 )
 
 # ============================================================================
