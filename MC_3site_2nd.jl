@@ -106,6 +106,20 @@ function compute_qfi(psi, s, cutoff::Float64)
     N_vals = expect(psi, "N * N")
     N1, N3 = N_vals[1], N_vals[3]
 
+    let
+        center = (length(s) + 1) ÷ 2
+        os = OpSum()
+        for i in eachindex(s)
+            os .+= (i - c), "N", i
+        end
+
+        Sz = MPO(os, s)
+
+        QFI = inner(Sz, psi, Sz, psi) - abs2(inner(psi', Sz, psi))
+    end
+
+
+
     # Compute ⟨n₁*n₃⟩ directly using inner product
     Op1 = op("N", s[1])
     Op3 = op("N", s[3])
