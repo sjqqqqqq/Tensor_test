@@ -1,6 +1,7 @@
 using ITensors, ITensorMPS
 using LinearAlgebra, Random, Statistics
 using Optim
+using Plots
 
 let
     # ── System parameters ────────────────────────────────────────────────────
@@ -86,6 +87,20 @@ let
         return abs2(inner(psi_target, psi))
     end
 
+    # ── Infidelity vs time (for post-optimization diagnostics) ──────────────
+    function infidelity_vs_time(control)
+        psi = copy(psi0)
+        infid = zeros(Float64, nsteps)
+        for n in 1:nsteps
+            ctrl = exp(-im * dt * 2control[n] * Sz1)
+            psi  = apply(vcat(odd_half, even_half, [ctrl], even_half, odd_half),
+                         psi; cutoff, maxdim)
+            normalize!(psi)
+            infid[n] = 1.0 - abs2(inner(psi_target, psi))
+        end
+        return infid
+    end
+
     # ── Fidelity + gradient (combined forward-backward GRAPE sweep) ───────────
     function compute_fg(control)
         # ── Forward pass ──────────────────────────────────────────────────────
@@ -125,6 +140,7 @@ let
     println("JIT warmup..."); flush(stdout)
     compute_fg(zeros(nsteps))
     fidelity_only(zeros(nsteps))
+    infidelity_vs_time(zeros(nsteps))
     println("Warmup done.\n"); flush(stdout)
 
     # ── Gradient accuracy check (analytic vs finite-difference) ──────────────
@@ -146,14 +162,16 @@ let
     println(); flush(stdout)
 
     # ── GRAPE optimization (L-BFGS) ───────────────────────────────────────────
-    iter   = Ref(0)
-    t_opt  = Ref(time())
+    iter    = Ref(0)
+    t_opt   = Ref(time())
     F_cache = Ref(0.0)   # cache F computed inside grad! for loss()
+    F_history = Float64[]  # record F at each gradient evaluation
 
     # Optim interface: separate loss and grad! (compatible with Optim 2.x)
     function grad!(G, x)
         F, grd = compute_fg(x)
         F_cache[] = F
+        push!(F_history, F)
         G .= -grd    # L-BFGS minimizes 1-F; gradient of (1-F) = -gradient of F
         iter[] += 1
         elapsed = round(time() - t_opt[], digits=1)
@@ -193,6 +211,15 @@ let
             f_reltol     = 1e-10,
             show_trace   = false,
             store_trace  = true,
+            callback     = state -> begin
+                F_cur = 1.0 - state.value
+                if F_cur > 0.9999
+                    println("  Early stop: F = $(round(F_cur, digits=6)) > 0.9999")
+                    flush(stdout)
+                    return true
+                end
+                return false
+            end,
         )
     )
 
@@ -227,6 +254,38 @@ let
     println("  Control pulse stats:")
     println("    max |c|  = $(round(maximum(abs, control_opt), digits=3))")
     println("    rms  c   = $(round(sqrt(mean(control_opt.^2)), digits=3))")
+
+    # ── Plotting ──────────────────────────────────────────────────────────────
+    println("\nGenerating plots..."); flush(stdout)
+    t_grid = (1:nsteps) .* dt
+
+    # Figure 1: Optimal pulse vs time
+    p1 = plot(t_grid, control_opt;
+        xlabel="Time", ylabel="Control amplitude c(t)",
+        title="Optimal Control Pulse  (N=$N, F=$(round(F_check, digits=6)))",
+        legend=false, lw=1.5, color=:steelblue)
+    savefig(p1, "pulse.png")
+    println("  Saved pulse.png")
+
+    # Figure 2: Infidelity during optimal forward evolution vs time (log scale)
+    println("  Computing infidelity vs time..."); flush(stdout)
+    infid_t = infidelity_vs_time(control_opt)
+    p2 = plot(t_grid, infid_t;
+        xlabel="Time", ylabel="1 - F(t)",
+        title="Infidelity vs Time  (optimal pulse)",
+        legend=false, lw=1.5, color=:crimson,
+        yscale=:log10, yminorgrid=true)
+    savefig(p2, "infidelity_time.png")
+    println("  Saved infidelity_time.png")
+
+    # Figure 3: 1-F vs gradient evaluations (log scale)
+    p3 = plot(1:length(F_history), 1.0 .- F_history;
+        xlabel="Gradient evaluations", ylabel="1 - F",
+        title="GRAPE Convergence  (N=$N)",
+        legend=false, lw=1.5, color=:darkorange,
+        yscale=:log10, yminorgrid=true)
+    savefig(p3, "convergence.png")
+    println("  Saved convergence.png")
 
     (control=control_opt, fidelity=F_check, result=result)
 end
