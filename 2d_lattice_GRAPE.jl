@@ -376,11 +376,12 @@ function main()
     # Save controls
     output_file = "GRAPE_2d_pulse.jld2"
     println("\nSaving controls...")
-    @save output_file n=num_steps T=T dt=dt \
-        Va1=ctrls_opt[:,1] Va2=ctrls_opt[:,2] Va3=ctrls_opt[:,3] \
-        Vb1=ctrls_opt[:,4] Vb2=ctrls_opt[:,5] Vb3=ctrls_opt[:,6] \
-        U=ctrls_opt[:,7] Ja=ctrls_opt[:,8] Jb=ctrls_opt[:,9] \
-        fidelity=final_fidelity
+    n = num_steps
+    Va1, Va2, Va3 = ctrls_opt[:,1], ctrls_opt[:,2], ctrls_opt[:,3]
+    Vb1, Vb2, Vb3 = ctrls_opt[:,4], ctrls_opt[:,5], ctrls_opt[:,6]
+    U, Ja, Jb     = ctrls_opt[:,7], ctrls_opt[:,8], ctrls_opt[:,9]
+    fidelity      = final_fidelity
+    @save output_file n T dt Va1 Va2 Va3 Vb1 Vb2 Vb3 U Ja Jb fidelity
     println("Saved to: $output_file")
     println("  n = $num_steps time steps")
     println("  T = $T total time")
