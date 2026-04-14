@@ -24,6 +24,7 @@ using LinearAlgebra
 using Printf
 using Random
 using Optim
+using JLD2
 
 # ============================================================================
 # System definition
@@ -286,7 +287,7 @@ function grape_2d(psi0, psi_target, T, num_steps;
     function cb(state)
         iter_count[] += 1
         if verbose && (iter_count[] == 1 || iter_count[] % 10 == 0)
-            @printf("Iter %4d: fidelity = %.8f\n", iter_count[], 1.0 - state.value)
+            @printf("Iter %4d: fidelity = %.8f\n", iter_count[], 1.0 - state.f_x)
         end
         return false
     end
@@ -373,14 +374,18 @@ function main()
     @printf("  |ψ[2,3]|²             = %.6f\n",  abs2(ψf[idx2d(2,3)]))
 
     # Save controls
-    ctrl_names = ["Va1","Va2","Va3","Vb1","Vb2","Vb3","U","Ja","Jb"]
+    output_file = "GRAPE_2d_pulse.jld2"
     println("\nSaving controls...")
-    for (k, name) in enumerate(ctrl_names)
-        open("$(name)_2d_opt.txt", "w") do f
-            for v in ctrls_opt[:,k]; println(f, v); end
-        end
-    end
-    println("Saved to <name>_2d_opt.txt  ($(length(ctrl_names)) files)")
+    @save output_file n=num_steps T=T dt=dt \
+        Va1=ctrls_opt[:,1] Va2=ctrls_opt[:,2] Va3=ctrls_opt[:,3] \
+        Vb1=ctrls_opt[:,4] Vb2=ctrls_opt[:,5] Vb3=ctrls_opt[:,6] \
+        U=ctrls_opt[:,7] Ja=ctrls_opt[:,8] Jb=ctrls_opt[:,9] \
+        fidelity=final_fidelity
+    println("Saved to: $output_file")
+    println("  n = $num_steps time steps")
+    println("  T = $T total time")
+    println("  dt = $dt step size")
+    @printf("  Final fidelity ≈ %.8f\n", final_fidelity)
 
     return ctrls_opt, final_fidelity
 end
