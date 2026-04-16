@@ -4,11 +4,72 @@ using Optim
 using Plots
 using JLD2
 
+# ── Soft-core two-species boson site type ─────────────────────────────────────
+# Local basis: |nₐ, n_b⟩  with  nₐ, n_b ∈ 0..NMAX
+# Index ordering: i = nₐ*(NMAX+1) + n_b + 1  (1-based)
+# States: |0,0⟩=1, |0,1⟩=2, |0,2⟩=3, |1,0⟩=4, |1,1⟩=5, ...
+const NMAX = 2   # max occupancy per species per site
+
+ITensors.space(::SiteType"SoftBoson") = (NMAX+1)^2
+
+function ITensors.state(::StateName"Emp",  ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>1]      = 1.0; return T   # |0,0⟩
+end
+function ITensors.state(::StateName"Dn",   ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>2]      = 1.0; return T   # |0,1⟩
+end
+function ITensors.state(::StateName"Up",   ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>NMAX+2] = 1.0; return T   # |1,0⟩
+end
+function ITensors.state(::StateName"UpDn", ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>NMAX+3] = 1.0; return T   # |1,1⟩
+end
+
+function ITensors.op(::OpName"Nup", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX; i = na*d+nb+1; mat[i,i] = Float64(na); end
+    return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Ndn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX; i = na*d+nb+1; mat[i,i] = Float64(nb); end
+    return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Nupdn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX; i = na*d+nb+1; mat[i,i] = Float64(na*nb); end
+    return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Cdagup", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX-1, nb in 0:NMAX
+        i = na*d+nb+1; ip = (na+1)*d+nb+1; mat[ip,i] = sqrt(Float64(na+1))
+    end; return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Cup", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 1:NMAX, nb in 0:NMAX
+        i = na*d+nb+1; im_ = (na-1)*d+nb+1; mat[im_,i] = sqrt(Float64(na))
+    end; return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Cdagdn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX-1
+        i = na*d+nb+1; ip = na*d+nb+2; mat[ip,i] = sqrt(Float64(nb+1))
+    end; return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Cdn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 1:NMAX
+        i = na*d+nb+1; im_ = na*d+nb; mat[im_,i] = sqrt(Float64(nb))
+    end; return ITensor(mat, s', dag(s))
+end
+
 let
     # ── System parameters ─────────────────────────────────────────────────────
-    M      = 1        # number of a–b pairs (hard-core: max 1 per species per site)
+    M      = 1        # number of a–b pairs
     T      = 2π
-    nsteps = 1000      # Trotter steps; dt = T / nsteps
+    nsteps = 200      # Trotter steps; dt = T / nsteps
     dt     = T / nsteps
     cutoff = 1e-10
     maxdim = 64
@@ -20,7 +81,8 @@ let
     all_bonds = vcat(bonds_A, bonds_B)
 
     # ── Site indices ──────────────────────────────────────────────────────────
-    s = siteinds("Electron", 4; conserve_qns=true)
+    # "SoftBoson": local basis |nₐ,n_b⟩, nₐ,n_b ∈ 0..NMAX  (dim = (NMAX+1)² = 9)
+    s = siteinds("SoftBoson", 4)
 
     # ── States ────────────────────────────────────────────────────────────────
     psi0   = MPS(s, ["Up","Dn","Emp","Emp"])    # |a@0, b@1⟩
@@ -292,7 +354,7 @@ let
 
     t_opt[] = time()
     println("Starting GRAPE optimization")
-    println("  Model  : 4-site ring, M=$M pair(s), hard-core bosons, T=$(round(T,digits=4)), nsteps=$nsteps")
+    println("  Model  : 4-site ring, M=$M pair(s), soft-core bosons (NMAX=$NMAX), T=$(round(T,digits=4)), nsteps=$nsteps")
     println("  Task   : |a@0,b@1⟩ → (|a@0,b@1⟩+|a@2,b@3⟩)/√2  (SPDC-like Bell pair)")
     println("  Method : L-BFGS (m=30), max 200 iterations")
     println(); flush(stdout)
@@ -358,7 +420,7 @@ let
     end
 
     # ── Save pulse (JLD2, same format as GRAPE_2d_pulse.jld2) ────────────────
-    jldsave("GRAPE_2d_pulse_TN.jld2";
+    jldsave("GRAPE_2d_pulse_MPS.jld2";
         n0       = nsteps,
         dt       = dt,
         Va1      = c_opt[:,1],

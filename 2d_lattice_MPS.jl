@@ -82,7 +82,7 @@ let
     # Two save conventions are supported:
     #   Dense GRAPE (GRAPE_2d_pulse.jld2):    key "n"=201, "T" stored, "U"
     #   TN GRAPE    (GRAPE_2d_pulse_TN.jld2): key "n0"=200, no "T",   "UH"
-    pulse_file = "GRAPE_2d_pulse.jld2"
+    pulse_file = "GRAPE_2d_pulse_MPS.jld2"
     println("Loading GRAPE pulse from: $pulse_file")
     pulse = load(pulse_file)
     if haskey(pulse, "n")
