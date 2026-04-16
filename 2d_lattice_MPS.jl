@@ -10,10 +10,18 @@ const NMAX = 2   # max occupancy per species per site
 ITensors.space(::SiteType"SoftBoson") = (NMAX+1)^2
 
 # Named states matching "Electron" convention (valid for nₐ, n_b ∈ {0,1})
-ITensors.state(::StateName"Emp",  ::SiteType"SoftBoson") = 1
-ITensors.state(::StateName"Dn",   ::SiteType"SoftBoson") = 2        # |0,1⟩
-ITensors.state(::StateName"Up",   ::SiteType"SoftBoson") = NMAX+2   # |1,0⟩
-ITensors.state(::StateName"UpDn", ::SiteType"SoftBoson") = NMAX+3   # |1,1⟩
+function ITensors.state(::StateName"Emp",  ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>1]      = 1.0; return T   # |0,0⟩
+end
+function ITensors.state(::StateName"Dn",   ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>2]      = 1.0; return T   # |0,1⟩
+end
+function ITensors.state(::StateName"Up",   ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>NMAX+2] = 1.0; return T   # |1,0⟩
+end
+function ITensors.state(::StateName"UpDn", ::SiteType"SoftBoson", s::Index)
+    T = ITensor(s); T[s=>NMAX+3] = 1.0; return T   # |1,1⟩
+end
 
 function ITensors.op(::OpName"Nup", ::SiteType"SoftBoson", s::Index)
     d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
