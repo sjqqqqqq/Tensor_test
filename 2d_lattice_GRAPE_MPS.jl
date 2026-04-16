@@ -69,7 +69,7 @@ let
     # ── System parameters ─────────────────────────────────────────────────────
     M      = 1        # number of a–b pairs
     T      = 2π
-    nsteps = 200      # Trotter steps; dt = T / nsteps
+    nsteps = 100      # Trotter steps; dt = T / nsteps
     dt     = T / nsteps
     cutoff = 1e-10
     maxdim = 64
@@ -304,7 +304,7 @@ let
     println("  Reference fidelity F = $(round(F0, digits=6))"); flush(stdout)
 
     # Check 5 components: spread across control indices and time steps
-    checks = [(1,1), (100,4), (50,7), (75,8), (150,9)]
+    checks = [(1,1), (100,4), (50,7), (75,8), (90,9)]
     for (n_t, k_c) in checks
         cp = copy(c_test); cp[n_t,k_c] += h_fd
         cm = copy(c_test); cm[n_t,k_c] -= h_fd

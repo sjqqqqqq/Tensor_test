@@ -170,7 +170,7 @@ psi_target[idx(0, 1)] = 1.0 / sqrt(2)
 psi_target[idx(2, 3)] = 1.0 / sqrt(2)
 
 # Collect all pulse files (command-line or default set)
-pulse_files = length(ARGS) >= 1 ? ARGS : ["GRAPE_2d_pulse_TN.jld2"]
+pulse_files = length(ARGS) >= 1 ? ARGS : ["GRAPE_2d_pulse_MPS.jld2"]
 
 # ── per-file simulation ─────────────────────────────────────────────────────
 all_times  = Dict{String, Vector{Float64}}()
@@ -256,17 +256,8 @@ plot!(xlabel="Time", ylabel="Hopping Strength",
 # Combine all plots into a 2x2 layout
 combined_plot = plot(p1, p2, p3, p4, layout=(2, 2), size=(1200, 900))
 
-# Save plots
-# savefig(p1, "fidelity_vs_time.png")
-# savefig(p2, "V_vs_time.png")
-# savefig(p3, "U_vs_time.png")
-# savefig(p4, "J_vs_time.png")
-# savefig(combined_plot, "ode_simulation_results.png")
-
-# println("\nPlots saved:")
-# println("  1. fidelity_vs_time.png")
-# println("  2. V_vs_time.png")
-# println("  3. U_vs_time.png")
-# println("  4. J_vs_time.png")
-# println("  5. ode_simulation_results.png (combined)")
+# Save combined plot — filename derived from pulse file
+out_name = splitext(basename(pulse_file))[1] * "_results.png"
+savefig(combined_plot, out_name)
+println("Saved: $out_name")
 

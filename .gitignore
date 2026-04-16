@@ -5,4 +5,6 @@
 **/.ipynb_checkpoints
 *.pdf
 *.txt
+*.png
+*.jld2
 CLAUDE.md
