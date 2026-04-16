@@ -1,9 +1,64 @@
 using ITensors, ITensorMPS
 using JLD2
 
+# ── Soft-core two-species boson site type ─────────────────────────────────────
+# Local basis: |nₐ, n_b⟩  with  nₐ, n_b ∈ 0..NMAX
+# Index ordering: i = nₐ*(NMAX+1) + n_b + 1  (1-based)
+# States: |0,0⟩=1, |0,1⟩=2, |0,2⟩=3, |1,0⟩=4, |1,1⟩=5, ...
+const NMAX = 2   # max occupancy per species per site
+
+ITensors.space(::SiteType"SoftBoson") = (NMAX+1)^2
+
+# Named states matching "Electron" convention (valid for nₐ, n_b ∈ {0,1})
+ITensors.state(::StateName"Emp",  ::SiteType"SoftBoson") = 1
+ITensors.state(::StateName"Dn",   ::SiteType"SoftBoson") = 2        # |0,1⟩
+ITensors.state(::StateName"Up",   ::SiteType"SoftBoson") = NMAX+2   # |1,0⟩
+ITensors.state(::StateName"UpDn", ::SiteType"SoftBoson") = NMAX+3   # |1,1⟩
+
+function ITensors.op(::OpName"Nup", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX; i = na*d+nb+1; mat[i,i] = Float64(na); end
+    return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Ndn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX; i = na*d+nb+1; mat[i,i] = Float64(nb); end
+    return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Nupdn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX; i = na*d+nb+1; mat[i,i] = Float64(na*nb); end
+    return ITensor(mat, s', dag(s))
+end
+# Bosonic creation/annihilation: a†|nₐ⟩ = √(nₐ+1)|nₐ+1⟩, a|nₐ⟩ = √nₐ|nₐ-1⟩
+function ITensors.op(::OpName"Cdagup", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX-1, nb in 0:NMAX
+        i = na*d+nb+1; ip = (na+1)*d+nb+1; mat[ip,i] = sqrt(Float64(na+1))
+    end; return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Cup", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 1:NMAX, nb in 0:NMAX
+        i = na*d+nb+1; im_ = (na-1)*d+nb+1; mat[im_,i] = sqrt(Float64(na))
+    end; return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Cdagdn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 0:NMAX-1
+        i = na*d+nb+1; ip = na*d+nb+2; mat[ip,i] = sqrt(Float64(nb+1))
+    end; return ITensor(mat, s', dag(s))
+end
+function ITensors.op(::OpName"Cdn", ::SiteType"SoftBoson", s::Index)
+    d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
+    for na in 0:NMAX, nb in 1:NMAX
+        i = na*d+nb+1; im_ = na*d+nb; mat[im_,i] = sqrt(Float64(nb))
+    end; return ITensor(mat, s', dag(s))
+end
+
 let
     # ── System parameters ─────────────────────────────────────────────────────
-    M      = 1        # number of a–b pairs (hard-core: max 1 per species per site)
+    M      = 1        # number of a–b pairs
     cutoff = 1e-10
     maxdim = 64
 
@@ -19,7 +74,7 @@ let
     # Two save conventions are supported:
     #   Dense GRAPE (GRAPE_2d_pulse.jld2):    key "n"=201, "T" stored, "U"
     #   TN GRAPE    (GRAPE_2d_pulse_TN.jld2): key "n0"=200, no "T",   "UH"
-    pulse_file = "GRAPE_2d_pulse_TN.jld2"
+    pulse_file = "GRAPE_2d_pulse.jld2"
     println("Loading GRAPE pulse from: $pulse_file")
     pulse = load(pulse_file)
     if haskey(pulse, "n")
@@ -48,11 +103,10 @@ let
     println()
 
     # ── Site indices ──────────────────────────────────────────────────────────
-    # "Electron": Up = a-type atom, Dn = b-type atom
-    #   Local basis per site: |Emp⟩, |Up⟩, |Dn⟩, |UpDn⟩  (dim = 4)
-    #   Hard-core constraint: max 1 a + 1 b per lattice site
-    #   QN conservation: total n_up = M, total n_dn = M
-    s = siteinds("Electron", 4; conserve_qns=true)
+    # "SoftBoson": Up = a-type atom, Dn = b-type atom
+    #   Local basis per site: |nₐ,n_b⟩, nₐ,n_b ∈ 0..NMAX  (dim = (NMAX+1)² = 9)
+    #   Soft-core: no local hard-core constraint; bosonic √n factors in hopping
+    s = siteinds("SoftBoson", 4)
 
     # ── States ────────────────────────────────────────────────────────────────
     # M=1 initial: a-particle at lattice site 0, b-particle at lattice site 1
@@ -69,7 +123,7 @@ let
     # psi_target = normalize!(add(MPS(s,["Up","Up","Dn","Dn"]),
     #                             MPS(s,["Dn","Dn","Up","Up"]); cutoff, maxdim))
 
-    println("System  : 4-site ring (Gamma4), M=$M a-b pair(s), hard-core bosons")
+    println("System  : 4-site ring (Gamma4), M=$M a-b pair(s), soft-core bosons (NMAX=$NMAX)")
     println("Time    : T=$(round(T,digits=4)), nsteps=$nsteps, dt=$(round(dt,digits=5))")
     println("Initial : |a@0, b@1⟩")
     println("Target  : (|a@0,b@1⟩ + |a@2,b@3⟩)/√2")
@@ -96,7 +150,7 @@ let
                     U                       *op("Nupdn",s[j]))) for j in 1:4]
     end
 
-    # ── Hopping gates (treated as hard-core bosons; no Jordan-Wigner sign) ───
+    # ── Hopping gates (soft-core bosons; bosonic √n factors, no Jordan-Wigner sign) ───
     make_hop_a(j,k,Ja,τ) = exp(-im*τ*Ja*(op("Cdagup",s[j])*op("Cup",   s[k]) +
                                           op("Cup",   s[j])*op("Cdagup",s[k])))
     make_hop_b(j,k,Jb,τ) = exp(-im*τ*Jb*(op("Cdagdn",s[j])*op("Cdn",   s[k]) +
