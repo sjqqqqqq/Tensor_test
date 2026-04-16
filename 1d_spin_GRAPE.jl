@@ -212,7 +212,7 @@ let
             show_trace   = false,
             store_trace  = true,
             callback     = state -> begin
-                F_cur = 1.0 - state.value
+                F_cur = 1.0 - state.f_x
                 if F_cur > 0.9999
                     println("  Early stop: F = $(round(F_cur, digits=6)) > 0.9999")
                     flush(stdout)

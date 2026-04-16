@@ -1,11 +1,9 @@
 using ITensors, ITensorMPS
+using JLD2
 
 let
     # ── System parameters ─────────────────────────────────────────────────────
     M      = 1        # number of a–b pairs (hard-core: max 1 per species per site)
-    T      = 2π       # total time (matches 2d_lattice_GRAPE.jl)
-    nsteps = 200      # Trotter steps; dt = T / nsteps
-    dt     = T / nsteps
     cutoff = 1e-10
     maxdim = 64
 
@@ -17,22 +15,37 @@ let
     bonds_A = [(1,2), (3,4)]
     bonds_B = [(1,3), (2,4)]
 
-    # ── Controls: nsteps × 9  [Va1, Va2, Va3, Vb1, Vb2, Vb3, U, Ja, Jb] ────
-    # Va1 = potential difference (site 1 − site 0) for a-type, etc.
-    #
-    # Test case 1 – constant U/J (non-trivial dynamics):
-    controls = zeros(nsteps, 9)
-    controls[:, 7] .= 1.0   # U  = 1
-    controls[:, 8] .= 1.0   # Ja = 1
-    controls[:, 9] .= 1.0   # Jb = 1
-    #
-    # Test case 2 – zero controls (free evolution; state remains fixed):
-    # controls = zeros(nsteps, 9)
-    #
-    # Test case 3 – sinusoidal Ja/Jb:
-    # t_arr = range(0, T; length=nsteps)
-    # controls[:, 8] .= 1.0 .+ 0.3 .* sin.(2π .* t_arr ./ T)
-    # controls[:, 9] .= 1.0 .+ 0.3 .* cos.(2π .* t_arr ./ T)
+    # ── Load GRAPE pulse from JLD2 ────────────────────────────────────────────
+    # Two save conventions are supported:
+    #   Dense GRAPE (GRAPE_2d_pulse.jld2):    key "n"=201, "T" stored, "U"
+    #   TN GRAPE    (GRAPE_2d_pulse_TN.jld2): key "n0"=200, no "T",   "UH"
+    pulse_file = "GRAPE_2d_pulse_TN.jld2"
+    println("Loading GRAPE pulse from: $pulse_file")
+    pulse = load(pulse_file)
+    if haskey(pulse, "n")
+        n_pulse = Int(pulse["n"])     # 201 time-points → 200 steps
+        nsteps  = n_pulse - 1
+    else
+        nsteps  = Int(pulse["n0"])    # 200 steps directly
+        n_pulse = nsteps + 1
+    end
+    dt     = pulse["dt"]
+    T      = haskey(pulse, "T") ? pulse["T"] : dt * nsteps
+    Va1_p = pulse["Va1"][1:nsteps]
+    Va2_p = pulse["Va2"][1:nsteps]
+    Va3_p = pulse["Va3"][1:nsteps]
+    Vb1_p = pulse["Vb1"][1:nsteps]
+    Vb2_p = pulse["Vb2"][1:nsteps]
+    Vb3_p = pulse["Vb3"][1:nsteps]
+    U_p   = (haskey(pulse,"U") ? pulse["U"] : pulse["UH"])[1:nsteps]
+    Ja_p  = pulse["Ja"][1:nsteps]
+    Jb_p  = pulse["Jb"][1:nsteps]
+    controls = hcat(Va1_p, Va2_p, Va3_p, Vb1_p, Vb2_p, Vb3_p, U_p, Ja_p, Jb_p)
+    grape_fidelity = pulse["fidelity"]
+    println("  Loaded: n_pulse=$n_pulse, T=$(round(T,digits=4)), dt=$(round(dt,digits=6))")
+    println("  Using nsteps=$nsteps Trotter gates")
+    println("  GRAPE fidelity (TN): $(round(grape_fidelity, digits=8))")
+    println()
 
     # ── Site indices ──────────────────────────────────────────────────────────
     # "Electron": Up = a-type atom, Dn = b-type atom
@@ -172,31 +185,12 @@ let
                 "χ_max = $(bond_dims[n])")
     end
 
-    # ── Trotter accuracy check (reference: dt_ref = dt/10) ────────────────────
-    # 2nd-order Trotter has global error O(dt²); expect |ΔF| ≈ 100× smaller at dt/10.
+    # ── Summary vs dense GRAPE ────────────────────────────────────────────────
     println()
-    println("─── Trotter accuracy check (reference dt = $(round(dt/10,digits=6))) ──────────────")
-    dt_ref  = dt / 10
-    ns_ref  = nsteps * 10
-    Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = controls[1,:]   # constant controls assumed
-    # Precompute reference gates once (constant controls)
-    d1h_ref  = make_onsite_gates(Va1,Va2,Va3,Vb1,Vb2,Vb3,U, dt_ref/2)
-    jaAh_ref = [make_hop_a(j,k,Ja,dt_ref/2) for (j,k) in bonds_A]
-    jaBf_ref = [make_hop_a(j,k,Ja,dt_ref)   for (j,k) in bonds_B]
-    jbAh_ref = [make_hop_b(j,k,Jb,dt_ref/2) for (j,k) in bonds_A]
-    jbBf_ref = [make_hop_b(j,k,Jb,dt_ref)   for (j,k) in bonds_B]
-    ref_gates = vcat(d1h_ref, jaAh_ref, jaBf_ref, jaAh_ref, jbAh_ref, jbBf_ref, jbAh_ref, d1h_ref)
-
-    psi_ref = copy(psi0)
-    t_ref = @elapsed for _ in 1:ns_ref
-        psi_ref = apply(ref_gates, psi_ref; cutoff, maxdim)
-        normalize!(psi_ref)
-    end
-    F_ref = abs2(inner(psi_target, psi_ref))
-    println("Reference fidelity (dt=$(round(dt_ref,digits=6)), $ns_ref steps) : $(round(F_ref, digits=8))")
-    println("Coarse    fidelity (dt=$(round(dt,digits=5)),  $nsteps steps) : $(round(fidelities[end], digits=8))")
-    println("Trotter error |ΔF|                               : $(round(abs(fidelities[end] - F_ref), sigdigits=3))")
-    println("Reference wall time                              : $(round(t_ref, digits=2)) s  ($(round(t_ref/ns_ref*1000, digits=3)) ms/step)")
+    println("─── MPS vs GRAPE pulse comparison ────────────────────────────────────")
+    println("GRAPE fidelity (pulse file)         : $(round(grape_fidelity, digits=8))")
+    println("MPS Trotter fidelity (nsteps=$nsteps)  : $(round(fidelities[end], digits=8))")
+    println("Difference |ΔF|                     : $(round(abs(fidelities[end] - grape_fidelity), sigdigits=3))")
 
     (fidelities=fidelities, nup_profiles=nup_profiles, ndn_profiles=ndn_profiles, bond_dims=bond_dims)
 end

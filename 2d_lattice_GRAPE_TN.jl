@@ -2,12 +2,13 @@ using ITensors, ITensorMPS
 using LinearAlgebra, Random, Statistics
 using Optim
 using Plots
+using JLD2
 
 let
     # ── System parameters ─────────────────────────────────────────────────────
     M      = 1        # number of a–b pairs (hard-core: max 1 per species per site)
     T      = 2π
-    nsteps = 200      # Trotter steps; dt = T / nsteps
+    nsteps = 1000      # Trotter steps; dt = T / nsteps
     dt     = T / nsteps
     cutoff = 1e-10
     maxdim = 64
@@ -308,7 +309,7 @@ let
             show_trace  = false,
             store_trace = true,
             callback    = state -> begin
-                F_cur = 1.0 - state.value
+                F_cur = 1.0 - state.f_x
                 if F_cur > 0.9999
                     println("  Early stop: F = $(round(F_cur,digits=6)) > 0.9999")
                     flush(stdout)
@@ -355,6 +356,23 @@ let
         println("    $name : max|c|=$(round(maximum(abs,c_opt[:,k]),digits=3))"*
                 "  rms=$(round(sqrt(mean(c_opt[:,k].^2)),digits=3))")
     end
+
+    # ── Save pulse (JLD2, same format as GRAPE_2d_pulse.jld2) ────────────────
+    jldsave("GRAPE_2d_pulse_TN.jld2";
+        n0       = nsteps,
+        dt       = dt,
+        Va1      = c_opt[:,1],
+        Va2      = c_opt[:,2],
+        Va3      = c_opt[:,3],
+        Vb1      = c_opt[:,4],
+        Vb2      = c_opt[:,5],
+        Vb3      = c_opt[:,6],
+        UH       = c_opt[:,7],
+        Ja       = c_opt[:,8],
+        Jb       = c_opt[:,9],
+        fidelity = F_check,
+    )
+    println("  Saved GRAPE_2d_pulse_TN.jld2")
 
     # ── Plots ─────────────────────────────────────────────────────────────────
     println("\nGenerating plots..."); flush(stdout)

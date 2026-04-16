@@ -49,10 +49,13 @@ mutable struct PulseFull
         end
 
         data = load(pulse_file)
-        n  = data["n"]
-        T  = data["T"]
+        # Support two save conventions:
+        #   Dense GRAPE: key "n" (=n_points), "T" stored,  key "U"
+        #   TN GRAPE:    key "n0" (=n_steps), no "T",      key "UH"
+        n  = haskey(data, "n")  ? Int(data["n"])  : Int(data["n0"])
         dt = data["dt"]
-        U  = data["U"]
+        T  = haskey(data, "T")  ? data["T"]       : dt * n
+        U  = haskey(data, "U")  ? data["U"]       : data["UH"]
         Ja = data["Ja"]
         Jb = data["Jb"]
 
@@ -167,7 +170,7 @@ psi_target[idx(0, 1)] = 1.0 / sqrt(2)
 psi_target[idx(2, 3)] = 1.0 / sqrt(2)
 
 # Collect all pulse files (command-line or default set)
-pulse_files = length(ARGS) >= 1 ? ARGS : ["GRAPE_pulse.jld2", "optimized_pulse.jld2", "GRAPE_2d_pulse.jld2"]
+pulse_files = length(ARGS) >= 1 ? ARGS : ["GRAPE_2d_pulse_TN.jld2"]
 
 # ── per-file simulation ─────────────────────────────────────────────────────
 all_times  = Dict{String, Vector{Float64}}()
