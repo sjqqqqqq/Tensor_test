@@ -4,11 +4,11 @@ Pkg.activate("Tensor_test")
 using ITensors, ITensorMPS
 using LinearAlgebra, Random, Statistics
 using Optim
-using Plots
+using JLD2
 
 let
     # ── System parameters ────────────────────────────────────────────────────
-    N      = 11           # spins (d = 11, paper Section 4)
+    N      = 21           # spins (d = 11, paper Section 4)
     Jx     = 2π           # XXX Heisenberg: Jx = Jy = Jz = 2π
     Jy     = 2π           # (set Jz = 2.2π for XXZ)
     Jz     = 2π
@@ -258,37 +258,7 @@ let
     println("    max |c|  = $(round(maximum(abs, control_opt), digits=3))")
     println("    rms  c   = $(round(sqrt(mean(control_opt.^2)), digits=3))")
 
-    # ── Plotting ──────────────────────────────────────────────────────────────
-    println("\nGenerating plots..."); flush(stdout)
-    t_grid = (1:nsteps) .* dt
-
-    # Figure 1: Optimal pulse vs time
-    p1 = plot(t_grid, control_opt;
-        xlabel="Time", ylabel="Control amplitude c(t)",
-        title="Optimal Control Pulse  (N=$N, F=$(round(F_check, digits=6)))",
-        legend=false, lw=1.5, color=:steelblue)
-    savefig(p1, "pulse.png")
-    println("  Saved pulse.png")
-
-    # Figure 2: Infidelity during optimal forward evolution vs time (log scale)
-    println("  Computing infidelity vs time..."); flush(stdout)
-    infid_t = infidelity_vs_time(control_opt)
-    p2 = plot(t_grid, infid_t;
-        xlabel="Time", ylabel="1 - F(t)",
-        title="Infidelity vs Time  (optimal pulse)",
-        legend=false, lw=1.5, color=:crimson,
-        yscale=:log10, yminorgrid=true)
-    savefig(p2, "infidelity_time.png")
-    println("  Saved infidelity_time.png")
-
-    # Figure 3: 1-F vs gradient evaluations (log scale)
-    p3 = plot(1:length(F_history), 1.0 .- F_history;
-        xlabel="Gradient evaluations", ylabel="1 - F",
-        title="GRAPE Convergence  (N=$N)",
-        legend=false, lw=1.5, color=:darkorange,
-        yscale=:log10, yminorgrid=true)
-    savefig(p3, "convergence.png")
-    println("  Saved convergence.png")
-
-    (control=control_opt, fidelity=F_check, result=result)
+     # ── Save optimal pulse ────────────────────────────────────────────────────
+    jldsave("1d_spin_21.jld2"; control_opt, F_opt, F_check)
+    println("\n  Saved optimal pulse → 1d_spin_21.jld2")
 end
