@@ -334,8 +334,14 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
 
     function cb(state)
         iter_count[] += 1
+        fid = 1.0 - state.f_x
         if verbose && (iter_count[] == 1 || iter_count[] % 10 == 0)
-            @printf("Iter %4d: fidelity = %.8f\n", iter_count[], 1.0 - state.f_x)
+            @printf("Iter %4d: fidelity = %.8f\n", iter_count[], fid)
+        end
+        if fid > 0.99
+            verbose && @printf("Iter %4d: fidelity = %.8f ≥ 0.99, stopping.\n",
+                               iter_count[], fid)
+            return true
         end
         return false
     end
