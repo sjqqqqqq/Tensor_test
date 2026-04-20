@@ -28,8 +28,8 @@ function fidelity_trajectory(N::Int, ctrls, T::Float64, num_steps::Int)
     return fid
 end
 
-function plot_case(N::Int)
-    file = "data/GRAPE_2d_$(N).jld2"
+function plot_case(N::Int; file::String = "data/GRAPE_2d_$(N).jld2",
+                   tag::String = "")
     d = load(file)
     n = d["n"]; T = d["T"]
     Va1, Va2, Va3 = d["Va1"], d["Va2"], d["Va3"]
@@ -68,7 +68,7 @@ function plot_case(N::Int)
                  legend=false, lw=1.5, ylim=(0, 1.05), color=:crimson)
 
     fig = plot(p_ctrl, p_fid; layout=grid(2,1, heights=[0.65, 0.35]), size=(900, 900))
-    out = "figures/exact_sim_N$(N).png"
+    out = "figures/exact_sim_N$(N)$(isempty(tag) ? "" : "_" * tag).png"
     savefig(fig, out)
     println("   saved $out")
 end
