@@ -5,24 +5,12 @@ using Plots
 # ── Soft-core two-species boson site type ─────────────────────────────────────
 # Local basis: |nₐ, n_b⟩  with  nₐ, n_b ∈ 0..NMAX
 # Index ordering: i = nₐ*(NMAX+1) + n_b + 1  (1-based)
-# States: |0,0⟩=1, |0,1⟩=2, |0,2⟩=3, |1,0⟩=4, |1,1⟩=5, ...
-const NMAX = 2   # max occupancy per species per site
+const NMAX = 3   # max occupancy per species per site (supports N=1..3 pairs)
 
 ITensors.space(::SiteType"SoftBoson") = (NMAX+1)^2
 
-# Named states matching "Electron" convention (valid for nₐ, n_b ∈ {0,1})
-function ITensors.state(::StateName"Emp",  ::SiteType"SoftBoson", s::Index)
-    T = ITensor(s); T[s=>1]      = 1.0; return T   # |0,0⟩
-end
-function ITensors.state(::StateName"Dn",   ::SiteType"SoftBoson", s::Index)
-    T = ITensor(s); T[s=>2]      = 1.0; return T   # |0,1⟩
-end
-function ITensors.state(::StateName"Up",   ::SiteType"SoftBoson", s::Index)
-    T = ITensor(s); T[s=>NMAX+2] = 1.0; return T   # |1,0⟩
-end
-function ITensors.state(::StateName"UpDn", ::SiteType"SoftBoson", s::Index)
-    T = ITensor(s); T[s=>NMAX+3] = 1.0; return T   # |1,1⟩
-end
+# Helper: basis index for occupation (na, nb) at one site
+occ_idx(na, nb) = na*(NMAX+1) + nb + 1
 
 function ITensors.op(::OpName"Nup", ::SiteType"SoftBoson", s::Index)
     d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
@@ -39,7 +27,6 @@ function ITensors.op(::OpName"Nupdn", ::SiteType"SoftBoson", s::Index)
     for na in 0:NMAX, nb in 0:NMAX; i = na*d+nb+1; mat[i,i] = Float64(na*nb); end
     return ITensor(mat, s', dag(s))
 end
-# Bosonic creation/annihilation: a†|nₐ⟩ = √(nₐ+1)|nₐ+1⟩, a|nₐ⟩ = √nₐ|nₐ-1⟩
 function ITensors.op(::OpName"Cdagup", ::SiteType"SoftBoson", s::Index)
     d = NMAX+1; dim2 = d^2; mat = zeros(dim2, dim2)
     for na in 0:NMAX-1, nb in 0:NMAX
@@ -65,214 +52,158 @@ function ITensors.op(::OpName"Cdn", ::SiteType"SoftBoson", s::Index)
     end; return ITensor(mat, s', dag(s))
 end
 
-let
-    # ── System parameters ─────────────────────────────────────────────────────
-    M      = 1        # number of a–b pairs
-    cutoff = 1e-10
-    maxdim = 64
+const BONDS_A = [(1,2), (3,4)]
+const BONDS_B = [(1,3), (2,4)]
 
-    # ── 4-site ring topology ──────────────────────────────────────────────────
-    # Gamma4 bonds (0-indexed): (0,1), (0,2), (1,3), (2,3) — square ring 0–1–3–2–0
-    # In 1-indexed ITensor [site0→1, site1→2, site2→3, site3→4]:
-    #   Group A (adjacent in MPS):     bonds (1,2) and (3,4)
-    #   Group B (non-adjacent in MPS): bonds (1,3) and (2,4)
-    bonds_A = [(1,2), (3,4)]
-    bonds_B = [(1,3), (2,4)]
+# Per-site onsite coefficient for a-type (j is 1-indexed ITensor site)
+va_coeff(j, Va1,Va2,Va3) = j==1 ? -(Va1+Va2+Va3) :
+                            j==2 ?   Va1 :
+                            j==3 ?   Va2 : Va3
+vb_coeff(j, Vb1,Vb2,Vb3) = j==1 ? -(Vb1+Vb2+Vb3) :
+                             j==2 ?   Vb1 :
+                             j==3 ?   Vb2 : Vb3
 
-    # ── Load GRAPE pulse from JLD2 ────────────────────────────────────────────
-    # Two save conventions are supported:
-    #   Dense GRAPE (GRAPE_2d_pulse.jld2):    key "n"=201, "T" stored, "U"
-    #   TN GRAPE    (GRAPE_2d_pulse_TN.jld2): key "n0"=200, no "T",   "UH"
-    pulse_file = "data/GRAPE_2d_pulse_MPS.jld2"
-    println("Loading GRAPE pulse from: $pulse_file")
-    pulse = load(pulse_file)
-    if haskey(pulse, "n")
-        n_pulse = Int(pulse["n"])     # 201 time-points → 200 steps
-        nsteps  = n_pulse - 1
-    else
-        nsteps  = Int(pulse["n0"])    # 200 steps directly
-        n_pulse = nsteps + 1
+function make_onsite_gates(s, Va1,Va2,Va3, Vb1,Vb2,Vb3, U, τ)
+    [exp(-im*τ*(va_coeff(j,Va1,Va2,Va3)*op("Nup",  s[j]) +
+                vb_coeff(j,Vb1,Vb2,Vb3)*op("Ndn",  s[j]) +
+                U                       *op("Nupdn",s[j]))) for j in 1:4]
+end
+
+make_hop_a(s,j,k,Ja,τ) = exp(-im*τ*Ja*(op("Cdagup",s[j])*op("Cup",   s[k]) +
+                                        op("Cup",   s[j])*op("Cdagup",s[k])))
+make_hop_b(s,j,k,Jb,τ) = exp(-im*τ*Jb*(op("Cdagdn",s[j])*op("Cdn",   s[k]) +
+                                        op("Cdn",   s[j])*op("Cdagdn",s[k])))
+
+function trotter_step(s, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, step_dt;
+                      cutoff, maxdim)
+    d1h   = make_onsite_gates(s, Va1,Va2,Va3,Vb1,Vb2,Vb3,U, step_dt/2)
+    jaAh  = [make_hop_a(s,j,k,Ja,step_dt/2) for (j,k) in BONDS_A]
+    jaBf  = [make_hop_a(s,j,k,Ja,step_dt)   for (j,k) in BONDS_B]
+    jbAh  = [make_hop_b(s,j,k,Jb,step_dt/2) for (j,k) in BONDS_A]
+    jbBf  = [make_hop_b(s,j,k,Jb,step_dt)   for (j,k) in BONDS_B]
+    psi = apply(vcat(d1h, jaAh, jaBf, jaAh, jbAh, jbBf, jbAh, d1h), psi;
+                cutoff, maxdim)
+    normalize!(psi)
+    return psi
+end
+
+# Build a product-state MPS from a list of (na, nb) per site.
+function product_mps(s, occs)
+    L = length(s)
+    @assert length(occs) == L
+    # Link indices of dimension 1 between each pair of sites
+    links = [Index(1, "Link,l=$j") for j in 1:L-1]
+    tensors = Vector{ITensor}(undef, L)
+    for j in 1:L
+        na, nb = occs[j]
+        inds = if j == 1
+            (s[j], links[1])
+        elseif j == L
+            (links[L-1], s[j])
+        else
+            (links[j-1], s[j], links[j])
+        end
+        T = ITensor(ComplexF64, inds...)
+        # Set the single nonzero entry (all link indices take value 1).
+        if j == 1
+            T[s[j] => occ_idx(na,nb), links[1] => 1] = 1.0
+        elseif j == L
+            T[links[L-1] => 1, s[j] => occ_idx(na,nb)] = 1.0
+        else
+            T[links[j-1] => 1, s[j] => occ_idx(na,nb), links[j] => 1] = 1.0
+        end
+        tensors[j] = T
     end
-    dt     = pulse["dt"]
-    T      = haskey(pulse, "T") ? pulse["T"] : dt * nsteps
-    Va1_p = pulse["Va1"][1:nsteps]
-    Va2_p = pulse["Va2"][1:nsteps]
-    Va3_p = pulse["Va3"][1:nsteps]
-    Vb1_p = pulse["Vb1"][1:nsteps]
-    Vb2_p = pulse["Vb2"][1:nsteps]
-    Vb3_p = pulse["Vb3"][1:nsteps]
-    U_p   = (haskey(pulse,"U") ? pulse["U"] : pulse["UH"])[1:nsteps]
-    Ja_p  = pulse["Ja"][1:nsteps]
-    Jb_p  = pulse["Jb"][1:nsteps]
+    return MPS(tensors)
+end
+
+function build_states(s, N::Int; cutoff, maxdim)
+    init_occ = [(N, 0), (0, N), (0, 0), (0, 0)]
+    tL_occ   = [(N, 0), (0, N), (0, 0), (0, 0)]
+    tR_occ   = [(0, 0), (0, 0), (N, 0), (0, N)]
+    psi0   = product_mps(s, init_occ)
+    psi_tL = product_mps(s, tL_occ)
+    psi_tR = product_mps(s, tR_occ)
+    psi_target = normalize!(add(psi_tL, psi_tR; cutoff, maxdim))
+    return psi0, psi_target
+end
+
+function simulate_case(N::Int; cutoff=1e-10, maxdim=64)
+    println("="^70)
+    println("MPS simulation — N = $N pair(s)")
+    println("="^70)
+
+    pulse_file = "data/GRAPE_2d_$(N).jld2"
+    println("Loading GRAPE pulse from: $pulse_file")
+    pulse   = load(pulse_file)
+    n_pulse = Int(pulse["n"])
+    nsteps  = n_pulse - 1
+    dt      = pulse["dt"]
+    T       = pulse["T"]
+    Va1_p   = pulse["Va1"][1:nsteps]; Va2_p = pulse["Va2"][1:nsteps]; Va3_p = pulse["Va3"][1:nsteps]
+    Vb1_p   = pulse["Vb1"][1:nsteps]; Vb2_p = pulse["Vb2"][1:nsteps]; Vb3_p = pulse["Vb3"][1:nsteps]
+    U_p     = pulse["U"][1:nsteps];   Ja_p  = pulse["Ja"][1:nsteps];  Jb_p  = pulse["Jb"][1:nsteps]
     controls = hcat(Va1_p, Va2_p, Va3_p, Vb1_p, Vb2_p, Vb3_p, U_p, Ja_p, Jb_p)
     grape_fidelity = pulse["fidelity"]
-    println("  Loaded: n_pulse=$n_pulse, T=$(round(T,digits=4)), dt=$(round(dt,digits=6))")
-    println("  Using nsteps=$nsteps Trotter gates")
-    println("  GRAPE fidelity (TN): $(round(grape_fidelity, digits=8))")
-    println()
+    println("  n_pulse=$n_pulse, T=$(round(T,digits=4)), dt=$(round(dt,digits=6))")
+    println("  GRAPE (exact) fidelity: $(round(grape_fidelity, digits=8))")
 
-    # ── Site indices ──────────────────────────────────────────────────────────
-    # "SoftBoson": Up = a-type atom, Dn = b-type atom
-    #   Local basis per site: |nₐ,n_b⟩, nₐ,n_b ∈ 0..NMAX  (dim = (NMAX+1)² = 9)
-    #   Soft-core: no local hard-core constraint; bosonic √n factors in hopping
     s = siteinds("SoftBoson", 4)
+    psi0, psi_target = build_states(s, N; cutoff, maxdim)
 
-    # ── States ────────────────────────────────────────────────────────────────
-    # M=1 initial: a-particle at lattice site 0, b-particle at lattice site 1
-    psi0 = MPS(s, ["Up","Dn","Emp","Emp"])
-
-    # M=1 target: (|a@0,b@1⟩ + |a@2,b@3⟩)/√2   (SPDC-like Bell pair)
-    psi_t1     = MPS(s, ["Up","Dn","Emp","Emp"])   # |a@0, b@1⟩
-    psi_t2     = MPS(s, ["Emp","Emp","Up","Dn"])   # |a@2, b@3⟩
-    psi_target = normalize!(add(psi_t1, psi_t2; cutoff, maxdim))
-
-    # M=2 initial (uncomment to use):
-    # psi0 = MPS(s, ["Up","Up","Dn","Dn"])   # a@{0,1}, b@{2,3}
-    # M=2 target: (|a@{0,1},b@{2,3}⟩ + |a@{2,3},b@{0,1}⟩)/√2
-    # psi_target = normalize!(add(MPS(s,["Up","Up","Dn","Dn"]),
-    #                             MPS(s,["Dn","Dn","Up","Up"]); cutoff, maxdim))
-
-    println("System  : 4-site ring (Gamma4), M=$M a-b pair(s), soft-core bosons (NMAX=$NMAX)")
-    println("Time    : T=$(round(T,digits=4)), nsteps=$nsteps, dt=$(round(dt,digits=5))")
-    println("Initial : |a@0, b@1⟩")
-    println("Target  : (|a@0,b@1⟩ + |a@2,b@3⟩)/√2")
-    println()
     println("Initial state norm    : ", norm(psi0))
     println("Initial fidelity F(0) : ", abs2(inner(psi_target, psi0)))
-    println()
 
-    # ── On-site Hamiltonian coefficients ──────────────────────────────────────
-    # H_onsite = Va1(n^a_1 − n^a_0) + Va2(n^a_2 − n^a_0) + Va3(n^a_3 − n^a_0)
-    #          + Vb1(n^b_1 − n^b_0) + Vb2(n^b_2 − n^b_0) + Vb3(n^b_3 − n^b_0)
-    #          + U·Σ_j n^a_j n^b_j
-    # Per-site coefficient for a-type (j is 1-indexed ITensor site):
-    va_coeff(j, Va1,Va2,Va3) = j==1 ? -(Va1+Va2+Va3) :
-                                j==2 ?   Va1 :
-                                j==3 ?   Va2 : Va3
-    vb_coeff(j, Vb1,Vb2,Vb3) = j==1 ? -(Vb1+Vb2+Vb3) :
-                                 j==2 ?   Vb1 :
-                                 j==3 ?   Vb2 : Vb3
-
-    function make_onsite_gates(Va1,Va2,Va3, Vb1,Vb2,Vb3, U, τ)
-        [exp(-im*τ*(va_coeff(j,Va1,Va2,Va3)*op("Nup",  s[j]) +
-                    vb_coeff(j,Vb1,Vb2,Vb3)*op("Ndn",  s[j]) +
-                    U                       *op("Nupdn",s[j]))) for j in 1:4]
-    end
-
-    # ── Hopping gates (soft-core bosons; bosonic √n factors, no Jordan-Wigner sign) ───
-    make_hop_a(j,k,Ja,τ) = exp(-im*τ*Ja*(op("Cdagup",s[j])*op("Cup",   s[k]) +
-                                          op("Cup",   s[j])*op("Cdagup",s[k])))
-    make_hop_b(j,k,Jb,τ) = exp(-im*τ*Jb*(op("Cdagdn",s[j])*op("Cdn",   s[k]) +
-                                          op("Cdn",   s[j])*op("Cdagdn",s[k])))
-
-    # ── Single 2nd-order Trotter step ─────────────────────────────────────────
-    #
-    # Structure: D1_half · U_Ja · U_Jb · D1_half
-    #   D1_half = exp(−i·dt/2·H_onsite)      [4 independent single-site gates]
-    #   U_Ja    = exp(−i·Ja·dt·H_Ja)         [2nd-order sub-Trotter: A/2→B→A/2]
-    #   U_Jb    = exp(−i·Jb·dt·H_Jb)         [same structure]
-    #
-    # H_Ja = Σ_{bonds} (a†_j a_k + h.c.),  split into:
-    #   Group A: bonds (1,2),(3,4) — adjacent in MPS, commute with each other
-    #   Group B: bonds (1,3),(2,4) — non-adjacent, handled by ITensor SWAP
-    # [H_Ja_A, H_Ja_B] ≠ 0 → 2nd-order sub-Trotter error O(dt³·Ja²) per step.
-    function trotter_step(psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, step_dt)
-        d1h   = make_onsite_gates(Va1,Va2,Va3,Vb1,Vb2,Vb3,U, step_dt/2)
-        jaAh  = [make_hop_a(j,k,Ja,step_dt/2) for (j,k) in bonds_A]
-        jaBf  = [make_hop_a(j,k,Ja,step_dt)   for (j,k) in bonds_B]
-        jbAh  = [make_hop_b(j,k,Jb,step_dt/2) for (j,k) in bonds_A]
-        jbBf  = [make_hop_b(j,k,Jb,step_dt)   for (j,k) in bonds_B]
-
-        # Apply all gates in a single sweep: D1/2 · jaA/2 · jaB · jaA/2 · jbA/2 · jbB · jbA/2 · D1/2
-        psi = apply(vcat(d1h, jaAh, jaBf, jaAh, jbAh, jbBf, jbAh, d1h), psi; cutoff, maxdim)
-        normalize!(psi)
-        return psi
-    end
-
-    # ── JIT warmup ────────────────────────────────────────────────────────────
-    println("JIT warmup..."); flush(stdout)
+    # JIT warmup
     psi_warm = copy(psi0)
-    for n in 1:3
+    for n in 1:min(3, nsteps)
         Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = controls[n,:]
-        psi_warm = trotter_step(psi_warm, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt)
-        _ = abs2(inner(psi_target, psi_warm))
-        _ = real(expect(psi_warm, "Nup"))
+        psi_warm = trotter_step(s, psi_warm, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt;
+                                cutoff, maxdim)
     end
-    println("JIT warmup done.\n"); flush(stdout)
 
-    # ── Observables storage ───────────────────────────────────────────────────
-    fidelities   = Vector{Float64}(undef, nsteps+1)
-    nup_profiles = Matrix{Float64}(undef, nsteps+1, 4)
-    ndn_profiles = Matrix{Float64}(undef, nsteps+1, 4)
-    bond_dims    = Vector{Int}(undef,    nsteps+1)
-
-    fidelities[1]       = abs2(inner(psi_target, psi0))
-    nup_profiles[1, :] .= real(expect(psi0, "Nup"))
-    ndn_profiles[1, :] .= real(expect(psi0, "Ndn"))
-    bond_dims[1]        = maxlinkdim(psi0)
-
-    # ── Time evolution loop ───────────────────────────────────────────────────
-    println("Starting time evolution: M=$M, T=$(round(T,digits=4)), nsteps=$nsteps, dt=$(round(dt,digits=5))")
-    flush(stdout)
+    fidelities = Vector{Float64}(undef, nsteps+1)
+    bond_dims  = Vector{Int}(undef,     nsteps+1)
+    fidelities[1] = abs2(inner(psi_target, psi0))
+    bond_dims[1]  = maxlinkdim(psi0)
 
     psi = copy(psi0)
     t_evolve = @elapsed for n in 1:nsteps
         Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = controls[n,:]
-        psi = trotter_step(psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt)
-        fidelities[n+1]       = abs2(inner(psi_target, psi))
-        nup_profiles[n+1, :] .= real(expect(psi, "Nup"))
-        ndn_profiles[n+1, :] .= real(expect(psi, "Ndn"))
-        bond_dims[n+1]        = maxlinkdim(psi)
+        psi = trotter_step(s, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt;
+                           cutoff, maxdim)
+        fidelities[n+1] = abs2(inner(psi_target, psi))
+        bond_dims[n+1]  = maxlinkdim(psi)
     end
 
-    # ── Print summary ─────────────────────────────────────────────────────────
-    println("─── Time evolution complete ───────────────────────────────────────")
-    println("Wall time (evolution loop) : $(round(t_evolve, digits=2)) s  ($(round(t_evolve/nsteps*1000, digits=3)) ms/step)")
-    println("Final fidelity F(T)        : $(fidelities[end])")
-    println("Max bond dim at t=T        : $(bond_dims[end])")
-    println("Max bond dim overall       : $(maximum(bond_dims))")
-    println()
-    println("n_up profile at t=0 : ", round.(nup_profiles[1,:],   digits=3))
-    println("n_up profile at t=T : ", round.(nup_profiles[end,:], digits=3))
-    println("n_dn profile at t=0 : ", round.(ndn_profiles[1,:],   digits=3))
-    println("n_dn profile at t=T : ", round.(ndn_profiles[end,:], digits=3))
-    println()
+    println("─── Time evolution complete ───")
+    println("Wall time : $(round(t_evolve, digits=2)) s  ($(round(t_evolve/nsteps*1000, digits=3)) ms/step)")
+    println("Final F(T): $(fidelities[end])")
+    println("Max χ     : $(maximum(bond_dims))")
+    println("GRAPE F   : $(round(grape_fidelity, digits=8))")
+    println("|ΔF|      : $(round(abs(fidelities[end] - grape_fidelity), sigdigits=3))")
 
-    # Fidelity at selected time points
-    println("Fidelity evolution (selected steps):")
-    checkpoints = unique([1; 20:20:nsteps; nsteps+1])
-    for n in checkpoints
-        t = (n-1) * dt
-        println("  t = $(lpad(round(t,digits=3),6))   " *
-                "F = $(round(fidelities[n],digits=6))   " *
-                "χ_max = $(bond_dims[n])")
-    end
-
-    # ── Summary vs dense GRAPE ────────────────────────────────────────────────
-    println()
-    println("─── MPS vs GRAPE pulse comparison ────────────────────────────────────")
-    println("GRAPE fidelity (pulse file)         : $(round(grape_fidelity, digits=8))")
-    println("MPS Trotter fidelity (nsteps=$nsteps)  : $(round(fidelities[end], digits=8))")
-    println("Difference |ΔF|                     : $(round(abs(fidelities[end] - grape_fidelity), sigdigits=3))")
-
-    # ── Plots ─────────────────────────────────────────────────────────────────
+    # Plots
     t_grid = (0:nsteps) .* dt
-
     ctrl_names = ["Va1","Va2","Va3","Vb1","Vb2","Vb3","U","Ja","Jb"]
     ctrl_plots = [plot(t_grid[1:nsteps], controls[:,k]; title=ctrl_names[k],
-                       xlabel="t", ylabel=ctrl_names[k],
-                       legend=false, lw=1.2) for k in 1:9]
+                       xlabel="t", ylabel=ctrl_names[k], legend=false, lw=1.2)
+                  for k in 1:9]
     p_ctrl = plot(ctrl_plots..., layout=(3,3), size=(900,700),
-                  plot_title="MPS sim controls (M=$M)")
-    savefig(p_ctrl, "figures/MPS_sim_pulse.png")
-    println("  Saved figures/MPS_sim_pulse.png")
-
+                  plot_title="MPS sim controls (N=$N)")
     p_fid = plot(t_grid, fidelities;
                  xlabel="t", ylabel="F(t)",
-                 title="MPS Fidelity (M=$M, F(T)=$(round(fidelities[end], digits=4)))",
+                 title="MPS Fidelity (N=$N, F(T)=$(round(fidelities[end], digits=4)))",
                  legend=false, lw=1.5, ylim=(0, 1.05), color=:crimson)
-    savefig(p_fid, "figures/MPS_sim_fidelity.png")
-    println("  Saved figures/MPS_sim_fidelity.png")
+    fig = plot(p_ctrl, p_fid; layout=grid(2,1, heights=[0.65, 0.35]), size=(900,900))
+    out = "figures/MPS_sim_N$(N).png"
+    savefig(fig, out)
+    println("  Saved $out")
+    return (fidelities=fidelities, bond_dims=bond_dims, grape_fidelity=grape_fidelity)
+end
 
-    (fidelities=fidelities, nup_profiles=nup_profiles, ndn_profiles=ndn_profiles, bond_dims=bond_dims)
+if abspath(PROGRAM_FILE) == @__FILE__
+    for N in 1:3
+        simulate_case(N)
+    end
 end
