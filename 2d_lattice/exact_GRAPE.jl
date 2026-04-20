@@ -452,7 +452,7 @@ function run_npair(N::Int=1;
     @printf("|⟨ψ_target|ψ_final⟩|² = %.8f\n", abs2(dot(psi_target, ψf)))
 
     if save
-        output_file = "GRAPE_2d_Npair_$(N).jld2"
+        output_file = "data/GRAPE_2d_Npair_$(N).jld2"
         println("\nSaving controls to $output_file ...")
         n = num_steps
         Va1, Va2, Va3 = ctrls_opt[:,1], ctrls_opt[:,2], ctrls_opt[:,3]

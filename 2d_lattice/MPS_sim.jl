@@ -1,5 +1,6 @@
 using ITensors, ITensorMPS
 using JLD2
+using Plots
 
 # ── Soft-core two-species boson site type ─────────────────────────────────────
 # Local basis: |nₐ, n_b⟩  with  nₐ, n_b ∈ 0..NMAX
@@ -82,7 +83,7 @@ let
     # Two save conventions are supported:
     #   Dense GRAPE (GRAPE_2d_pulse.jld2):    key "n"=201, "T" stored, "U"
     #   TN GRAPE    (GRAPE_2d_pulse_TN.jld2): key "n0"=200, no "T",   "UH"
-    pulse_file = "GRAPE_2d_pulse_MPS.jld2"
+    pulse_file = "data/GRAPE_2d_pulse_MPS.jld2"
     println("Loading GRAPE pulse from: $pulse_file")
     pulse = load(pulse_file)
     if haskey(pulse, "n")
@@ -253,6 +254,25 @@ let
     println("GRAPE fidelity (pulse file)         : $(round(grape_fidelity, digits=8))")
     println("MPS Trotter fidelity (nsteps=$nsteps)  : $(round(fidelities[end], digits=8))")
     println("Difference |ΔF|                     : $(round(abs(fidelities[end] - grape_fidelity), sigdigits=3))")
+
+    # ── Plots ─────────────────────────────────────────────────────────────────
+    t_grid = (0:nsteps) .* dt
+
+    ctrl_names = ["Va1","Va2","Va3","Vb1","Vb2","Vb3","U","Ja","Jb"]
+    ctrl_plots = [plot(t_grid[1:nsteps], controls[:,k]; title=ctrl_names[k],
+                       xlabel="t", ylabel=ctrl_names[k],
+                       legend=false, lw=1.2) for k in 1:9]
+    p_ctrl = plot(ctrl_plots..., layout=(3,3), size=(900,700),
+                  plot_title="MPS sim controls (M=$M)")
+    savefig(p_ctrl, "figures/MPS_sim_pulse.png")
+    println("  Saved figures/MPS_sim_pulse.png")
+
+    p_fid = plot(t_grid, fidelities;
+                 xlabel="t", ylabel="F(t)",
+                 title="MPS Fidelity (M=$M, F(T)=$(round(fidelities[end], digits=4)))",
+                 legend=false, lw=1.5, ylim=(0, 1.05), color=:crimson)
+    savefig(p_fid, "figures/MPS_sim_fidelity.png")
+    println("  Saved figures/MPS_sim_fidelity.png")
 
     (fidelities=fidelities, nup_profiles=nup_profiles, ndn_profiles=ndn_profiles, bond_dims=bond_dims)
 end

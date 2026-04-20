@@ -1,7 +1,6 @@
 using ITensors, ITensorMPS
 using LinearAlgebra, Random, Statistics
 using Optim
-using Plots
 using JLD2
 
 # ── Soft-core two-species boson site type ─────────────────────────────────────
@@ -420,7 +419,7 @@ let
     end
 
     # ── Save pulse (JLD2, same format as GRAPE_2d_pulse.jld2) ────────────────
-    jldsave("GRAPE_2d_pulse_MPS.jld2";
+    jldsave("data/GRAPE_2d_pulse_MPS.jld2";
         n0       = nsteps,
         dt       = dt,
         Va1      = c_opt[:,1],
@@ -434,29 +433,7 @@ let
         Jb       = c_opt[:,9],
         fidelity = F_check,
     )
-    println("  Saved GRAPE_2d_pulse_TN.jld2")
+    println("  Saved data/GRAPE_2d_pulse_MPS.jld2")
 
-    # ── Plots ─────────────────────────────────────────────────────────────────
-    println("\nGenerating plots..."); flush(stdout)
-    t_grid = (1:nsteps) .* dt
-
-    # Figure 1: Optimal control pulses (3×3 grid)
-    ctrl_names = ["Va1","Va2","Va3","Vb1","Vb2","Vb3","U","Ja","Jb"]
-    ctrl_plots = [plot(t_grid, c_opt[:,k]; title=ctrl_names[k],
-                       xlabel="t", ylabel=ctrl_names[k],
-                       legend=false, lw=1.2) for k in 1:9]
-    p1 = plot(ctrl_plots..., layout=(3,3), size=(900,700))
-    savefig(p1, "pulse_2d.png")
-    println("  Saved pulse_2d.png")
-
-    # Figure 2: Convergence (1-F vs gradient evaluations)
-    p2 = plot(1:length(F_history), 1.0 .- F_history;
-              xlabel="Gradient evaluations", ylabel="1 - F",
-              title="GRAPE Convergence  (M=$M, 4-site ring)",
-              legend=false, lw=1.5, color=:darkorange,
-              yscale=:log10, yminorgrid=true)
-    savefig(p2, "convergence_2d.png")
-    println("  Saved convergence_2d.png")
-
-    (controls=c_opt, fidelity=F_check, result=result)
+    (controls=c_opt, fidelity=F_check, F_history=F_history, result=result)
 end
