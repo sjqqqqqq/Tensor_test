@@ -5,11 +5,13 @@ include("soft_boson.jl")
 
 function trotter_step(s, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, step_dt;
                       cutoff, maxdim)
+    # 4 apply+normalize sub-steps — matches MPS_GRAPE.jl's forward pass so the
+    # simulated F(T) is bit-identical to the fidelity reported by GRAPE.
     d1h = make_onsite_gates(s, Va1,Va2,Va3, Vb1,Vb2,Vb3, U, step_dt/2)
-    ga  = hop_gates_a(s, Ja, step_dt)
-    gb  = hop_gates_b(s, Jb, step_dt)
-    psi = apply(vcat(d1h, ga, gb, d1h), psi; cutoff, maxdim)
-    normalize!(psi)
+    psi = apply(d1h, psi; cutoff, maxdim); normalize!(psi)
+    psi = apply(hop_gates_a(s, Ja, step_dt), psi; cutoff, maxdim); normalize!(psi)
+    psi = apply(hop_gates_b(s, Jb, step_dt), psi; cutoff, maxdim); normalize!(psi)
+    psi = apply(d1h, psi; cutoff, maxdim); normalize!(psi)
     return psi
 end
 
@@ -89,6 +91,11 @@ end
 
 if abspath(PROGRAM_FILE) == @__FILE__
     for N in 1:3
-        simulate_case(N)
+        # Exact-GRAPE pulse
+        ef = "data/GRAPE_2d_$(N).jld2"
+        isfile(ef) && simulate_case(N; file=ef, tag="exact")
+        # MPS-GRAPE pulse
+        mf = "data/GRAPE_2d_MPS_$(N).jld2"
+        isfile(mf) && simulate_case(N; file=mf, tag="MPS")
     end
 end

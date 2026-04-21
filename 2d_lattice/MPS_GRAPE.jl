@@ -50,21 +50,19 @@ function run_grape(N::Int;
     end
 
     # ── ⟨chi | H_hop (unit amplitude) | psi⟩ using apply to preserve QN ──────
+    H_up_tensors = hop_generator_tensors(s, :up)
+    H_dn_tensors = hop_generator_tensors(s, :dn)
     function hop_inner_a(chi, psi)
         r = 0.0im
-        for (j,k) in ALL_BONDS
-            h_jk = op("Cdagup",s[j])*op("Cup",   s[k]) +
-                   op("Cup",   s[j])*op("Cdagup",s[k])
-            r += inner(chi, apply([h_jk], psi; cutoff=0, maxdim=4*maxdim))
+        for H in H_up_tensors
+            r += inner(chi, apply([H], psi; cutoff=0, maxdim=4*maxdim))
         end
         return r
     end
     function hop_inner_b(chi, psi)
         r = 0.0im
-        for (j,k) in ALL_BONDS
-            h_jk = op("Cdagdn",s[j])*op("Cdn",   s[k]) +
-                   op("Cdn",   s[j])*op("Cdagdn",s[k])
-            r += inner(chi, apply([h_jk], psi; cutoff=0, maxdim=4*maxdim))
+        for H in H_dn_tensors
+            r += inner(chi, apply([H], psi; cutoff=0, maxdim=4*maxdim))
         end
         return r
     end
@@ -185,8 +183,8 @@ function run_grape(N::Int;
             store_trace = true,
             callback    = state -> begin
                 F_cur = 1.0 - state.f_x
-                if F_cur > 0.9999
-                    verbose && println("  Early stop: F = $(round(F_cur,digits=6)) > 0.9999")
+                if F_cur > 0.99
+                    verbose && println("  Early stop: F = $(round(F_cur,digits=6)) > 0.99")
                     return true
                 end
                 return false
