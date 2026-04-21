@@ -1,5 +1,5 @@
 using Pkg
-Pkg.activate("Tensor_test")
+Pkg.activate(joinpath(@__DIR__, ".."))
 
-include("MPS_GRAPE.jl")
+include(joinpath(@__DIR__, "..", "2d_lattice", "MPS_GRAPE.jl"))
 run_grape(3)
