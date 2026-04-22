@@ -7,4 +7,5 @@
 *.txt
 *.png
 **/*.jld2
+**/*.out
 CLAUDE.md
