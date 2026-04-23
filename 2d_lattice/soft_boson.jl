@@ -25,7 +25,12 @@ using ITensors, ITensorMPS
 using LinearAlgebra
 
 # ── Local Hilbert space ──────────────────────────────────────────────────────
-const NMAX = 3   # max occupancy per species per site (supports N = 1..3 pairs)
+# NMAX is the max per-species occupancy per site. It must be ≥ N (the pair
+# count) because the initial state |a^N@0, b^N@1⟩ parks all N particles of one
+# species on a single site. Default = 3 supports N ∈ {1,2,3}; scale by setting
+# the env var SOFTBOSON_NMAX before `include("soft_boson.jl")`.
+const NMAX = parse(Int, get(ENV, "SOFTBOSON_NMAX", "3"))
+@assert NMAX ≥ 1 "SOFTBOSON_NMAX must be ≥ 1"
 
 ITensors.space(::SiteType"SoftBoson") = (NMAX+1)^2
 

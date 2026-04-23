@@ -90,12 +90,16 @@ function simulate_case(N::Int; cutoff=1e-10, maxdim=64,
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
+    data_dir = joinpath(@__DIR__, "data")
     for N in 1:3
         # Exact-GRAPE pulse
-        ef = "data/GRAPE_2d_$(N).jld2"
+        ef = joinpath(data_dir, "GRAPE_2d_$(N).jld2")
         isfile(ef) && simulate_case(N; file=ef, tag="exact")
-        # MPS-GRAPE pulse
-        mf = "data/GRAPE_2d_MPS_$(N).jld2"
+        # MPS-GRAPE (Trotter) pulse
+        mf = joinpath(data_dir, "GRAPE_2d_MPS_$(N).jld2")
         isfile(mf) && simulate_case(N; file=mf, tag="MPS")
+        # MPS-GRAPE (MPO-TDVP) pulse — cross-check via Trotter replay
+        tf = joinpath(data_dir, "GRAPE_2d_MPS_TDVP_$(N).jld2")
+        isfile(tf) && simulate_case(N; file=tf, tag="MPS_TDVP")
     end
 end
