@@ -113,8 +113,10 @@ struct System2DNpair
     D::Int
     basis_a::Vector{Vector{Int}}
     basis_b::Vector{Vector{Int}}
-    H_Ja_mat::Matrix{ComplexF64}
-    H_Jb_mat::Matrix{ComplexF64}
+    evals_a::Vector{Float64}
+    evecs_a::Matrix{ComplexF64}
+    evals_b::Vector{Float64}
+    evecs_b::Matrix{ComplexF64}
     dVa::Vector{Vector{Float64}}  # length 3: Va1, Va2, Va3
     dVb::Vector{Vector{Float64}}  # length 3: Vb1, Vb2, Vb3
     dU::Vector{Float64}
@@ -126,12 +128,16 @@ function build_system(N::Int)
     basis_b = species_basis(L_SITES, N)
     Da = length(basis_a); Db = length(basis_b); D = Da*Db
 
+    # Eigendecompose only the small Da×Da / Db×Db hopping factors, never the
+    # D×D Kronecker. At N=10, D² complex would be ≈ 107 GB; h_a is 286×286.
     h_a = species_hopping(basis_a)
     h_b = species_hopping(basis_b)
-    I_a = Matrix{ComplexF64}(I, Da, Da)
-    I_b = Matrix{ComplexF64}(I, Db, Db)
-    H_Ja_mat = Matrix{ComplexF64}(kron(h_a, I_b))
-    H_Jb_mat = Matrix{ComplexF64}(kron(I_a, h_b))
+    Fa = eigen(Hermitian(Matrix(h_a)))
+    Fb = eigen(Hermitian(Matrix(h_b)))
+    evals_a = Fa.values
+    evecs_a = Matrix{ComplexF64}(Fa.vectors)
+    evals_b = Fb.values
+    evecs_b = Matrix{ComplexF64}(Fb.vectors)
 
     n_a = [species_occupation(basis_a, j) for j in 0:L_SITES-1]
     n_b = [species_occupation(basis_b, j) for j in 0:L_SITES-1]
@@ -147,7 +153,8 @@ function build_system(N::Int)
     end
 
     return System2DNpair(N, Da, Db, D, basis_a, basis_b,
-                        H_Ja_mat, H_Jb_mat, dVa, dVb, dU)
+                         evals_a, evecs_a, evals_b, evecs_b,
+                         dVa, dVb, dU)
 end
 
 # Index helpers -------------------------------------------------------------
@@ -181,11 +188,6 @@ end
 # Trotter propagation (mirrors 2d_lattice_GRAPE.jl)
 # ============================================================================
 
-function eigen_decomp(H)
-    F = eigen(Hermitian(Matrix(H)))
-    return F.values, F.vectors
-end
-
 function diag_exp(sys::System2DNpair, Va1, Va2, Va3, Vb1, Vb2, Vb3, U, dt)
     h = Va1 .* sys.dVa[1] .+ Va2 .* sys.dVa[2] .+ Va3 .* sys.dVa[3] .+
         Vb1 .* sys.dVb[1] .+ Vb2 .* sys.dVb[2] .+ Vb3 .* sys.dVb[3] .+
@@ -193,65 +195,87 @@ function diag_exp(sys::System2DNpair, Va1, Va2, Va3, Vb1, Vb2, Vb3, U, dt)
     return exp.(-im * dt .* h)
 end
 
-function trotter_step2d(sys, psi, Va1, Va2, Va3, Vb1, Vb2, Vb3, U, Ja, Jb, dt,
-                        evals_a, evecs_a, evals_b, evecs_b)
+# Factored hopping-propagator application. psi is reshaped as (Db, Da)
+# (column-major, flat index (ai-1)*Db + bi).
+#
+#   kron(h_a, I_b)·ψ   ⇔   M → M · h_a         (right-multiplication)
+#   kron(I_a, h_b)·ψ   ⇔   M → h_b · M         (left-multiplication)
+#
+# With h_a = V_a · diag(λ_a) · V_a†, the exponential exp(-iJa·dt·h_a) has
+# the eigendecomp V_a · diag(pa) · V_a† with pa = exp(-iJa·dt·λ_a); swap pa
+# for any scalar function of λ_a to apply other analytic functions of h_a.
+@inline function apply_a(psi, Da, Db, pa, evecs_a)
+    M = reshape(psi, Db, Da)
+    return vec(((M * evecs_a) .* transpose(pa)) * evecs_a')
+end
+
+@inline function apply_b(psi, Da, Db, pb, evecs_b)
+    M = reshape(psi, Db, Da)
+    return vec(evecs_b * (pb .* (evecs_b' * M)))
+end
+
+function trotter_step2d(sys, psi, Va1, Va2, Va3, Vb1, Vb2, Vb3, U, Ja, Jb, dt)
+    Da, Db = sys.Da, sys.Db
     d1 = diag_exp(sys, Va1, Va2, Va3, Vb1, Vb2, Vb3, U, dt/2)
+    pa = exp.(-im*Ja*dt .* sys.evals_a)
+    pb = exp.(-im*Jb*dt .* sys.evals_b)
     psi = d1 .* psi
-    psi = evecs_a * (Diagonal(exp.(-im*Ja*dt.*evals_a)) * (evecs_a'*psi))
-    psi = evecs_b * (Diagonal(exp.(-im*Jb*dt.*evals_b)) * (evecs_b'*psi))
+    psi = apply_a(psi, Da, Db, pa, sys.evecs_a)
+    psi = apply_b(psi, Da, Db, pb, sys.evecs_b)
     psi = d1 .* psi
     return psi
 end
 
-function trotter_fwd(sys, psi0, ctrls, dt, evals_a, evecs_a, evals_b, evecs_b)
+function trotter_fwd(sys, psi0, ctrls, dt)
     psi = copy(psi0)
     for n in 1:size(ctrls,1)-1
         Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = ctrls[n,:]
-        psi = trotter_step2d(sys, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt,
-                             evals_a,evecs_a,evals_b,evecs_b)
+        psi = trotter_step2d(sys, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt)
     end
     return psi
 end
 
-function trotter_fwd_store(sys, psi0, ctrls, dt, evals_a, evecs_a, evals_b, evecs_b)
+function trotter_fwd_store(sys, psi0, ctrls, dt)
     num_steps = size(ctrls,1)
     states = Vector{Vector{ComplexF64}}(undef, num_steps)
     psi = copy(psi0)
     states[1] = copy(psi)
     for n in 1:num_steps-1
         Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = ctrls[n,:]
-        psi = trotter_step2d(sys, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt,
-                             evals_a,evecs_a,evals_b,evecs_b)
+        psi = trotter_step2d(sys, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt)
         states[n+1] = copy(psi)
     end
     return states
 end
 
-function trotter_bwd_store(sys, chi_T, ctrls, dt, evals_a, evecs_a, evals_b, evecs_b)
+function trotter_bwd_store(sys, chi_T, ctrls, dt)
     num_steps = size(ctrls,1)
+    Da, Db = sys.Da, sys.Db
     costates = Vector{Vector{ComplexF64}}(undef, num_steps)
     chi = copy(chi_T)
     costates[num_steps] = copy(chi)
     for n in num_steps-1:-1:1
         Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = ctrls[n,:]
         d1 = diag_exp(sys, Va1,Va2,Va3,Vb1,Vb2,Vb3,U, dt/2)
-        pa = exp.(-im*Ja*dt.*evals_a)
-        pb = exp.(-im*Jb*dt.*evals_b)
+        pa = exp.(-im*Ja*dt .* sys.evals_a)
+        pb = exp.(-im*Jb*dt .* sys.evals_b)
         chi = conj.(d1) .* chi
-        chi = evecs_b * (Diagonal(conj.(pb)) * (evecs_b' * chi))
-        chi = evecs_a * (Diagonal(conj.(pa)) * (evecs_a' * chi))
+        chi = apply_b(chi, Da, Db, conj.(pb), sys.evecs_b)
+        chi = apply_a(chi, Da, Db, conj.(pa), sys.evecs_a)
         chi = conj.(d1) .* chi
         costates[n] = copy(chi)
     end
     return costates
 end
 
-function compute_grads(sys, psi_states, chi_states, ctrls, dt,
-                       evals_a, evecs_a, evals_b, evecs_b, overlap)
+function compute_grads(sys, psi_states, chi_states, ctrls, dt, overlap)
     num_steps = size(ctrls,1)
     grads = zeros(num_steps, 9)
     diag_vecs = (sys.dVa[1], sys.dVa[2], sys.dVa[3],
                  sys.dVb[1], sys.dVb[2], sys.dVb[3], sys.dU)
+    Da, Db = sys.Da, sys.Db
+    evecs_a = sys.evecs_a; evecs_b = sys.evecs_b
+    evals_a = sys.evals_a; evals_b = sys.evals_b
 
     for n in 1:num_steps-1
         Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = ctrls[n,:]
@@ -259,30 +283,32 @@ function compute_grads(sys, psi_states, chi_states, ctrls, dt,
         χnp1 = chi_states[n+1]
 
         d1 = diag_exp(sys, Va1,Va2,Va3,Vb1,Vb2,Vb3,U, dt/2)
-        pa = exp.(-im*Ja*dt.*evals_a)
-        pb = exp.(-im*Jb*dt.*evals_b)
+        pa = exp.(-im*Ja*dt .* evals_a)
+        pb = exp.(-im*Jb*dt .* evals_b)
 
         ψ1 = d1 .* ψn
-        ψ2 = evecs_a * (Diagonal(pa) * (evecs_a' * ψ1))
-        ψ3 = evecs_b * (Diagonal(pb) * (evecs_b' * ψ2))
+        ψ2 = apply_a(ψ1, Da, Db, pa, evecs_a)
+        ψ3 = apply_b(ψ2, Da, Db, pb, evecs_b)
 
-        # Ja gradient
-        dJa_ψ1 = evecs_a * (Diagonal(-im*dt.*evals_a.*pa) * (evecs_a' * ψ1))
-        gJa = d1 .* (evecs_b * (Diagonal(pb) * (evecs_b' * dJa_ψ1)))
+        # Ja gradient: ∂_Ja exp(-iJa·dt·h_a) = -i·dt·h_a·exp(-iJa·dt·h_a)
+        dpa    = -im*dt .* evals_a .* pa
+        dJa_ψ1 = apply_a(ψ1, Da, Db, dpa, evecs_a)
+        gJa    = d1 .* apply_b(dJa_ψ1, Da, Db, pb, evecs_b)
         grads[n, 8] = 2 * real(conj(overlap) * dot(χnp1, gJa))
 
         # Jb gradient
-        dJb_ψ2 = evecs_b * (Diagonal(-im*dt.*evals_b.*pb) * (evecs_b' * ψ2))
-        gJb = d1 .* dJb_ψ2
+        dpb    = -im*dt .* evals_b .* pb
+        dJb_ψ2 = apply_b(ψ2, Da, Db, dpb, evecs_b)
+        gJb    = d1 .* dJb_ψ2
         grads[n, 9] = 2 * real(conj(overlap) * dot(χnp1, gJb))
 
         # Diagonal-control gradients (Va1,Va2,Va3,Vb1,Vb2,Vb3,U)
         for (k, hk) in enumerate(diag_vecs)
             right  = (-im*dt/2) .* hk .* (d1 .* ψ3)
             dD1_ψn = (-im*dt/2) .* hk .* (d1 .* ψn)
-            left   = d1 .* (evecs_b * (Diagonal(pb) *
-                         (evecs_b' * (evecs_a * (Diagonal(pa) *
-                         (evecs_a' * dD1_ψn))))))
+            tmp    = apply_a(dD1_ψn, Da, Db, pa, evecs_a)
+            tmp    = apply_b(tmp,    Da, Db, pb, evecs_b)
+            left   = d1 .* tmp
             grads[n, k] = 2 * real(conj(overlap) * dot(χnp1, right .+ left))
         end
     end
@@ -298,8 +324,6 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
                         ctrls0=nothing, max_iter=500, tol=1e-4, verbose=true)
 
     dt = T / (num_steps - 1)
-    evals_a, evecs_a = eigen_decomp(sys.H_Ja_mat)
-    evals_b, evecs_b = eigen_decomp(sys.H_Jb_mat)
 
     ψ0 = Vector{ComplexF64}(psi0)
     ψt = Vector{ComplexF64}(psi_target)
@@ -315,17 +339,16 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
 
     function objective(x)
         c = reshape(x, num_steps, 9)
-        ψf = trotter_fwd(sys, ψ0, c, dt, evals_a, evecs_a, evals_b, evecs_b)
+        ψf = trotter_fwd(sys, ψ0, c, dt)
         return 1.0 - abs2(dot(ψt, ψf))
     end
 
     function gradient!(g, x)
         c = reshape(x, num_steps, 9)
-        states   = trotter_fwd_store(sys, ψ0, c, dt, evals_a, evecs_a, evals_b, evecs_b)
+        states   = trotter_fwd_store(sys, ψ0, c, dt)
         overlap  = dot(ψt, states[end])
-        costates = trotter_bwd_store(sys, ψt, c, dt, evals_a, evecs_a, evals_b, evecs_b)
-        grads    = compute_grads(sys, states, costates, c, dt,
-                                 evals_a, evecs_a, evals_b, evecs_b, overlap)
+        costates = trotter_bwd_store(sys, ψt, c, dt)
+        grads    = compute_grads(sys, states, costates, c, dt, overlap)
         g .= -vec(grads)
     end
 
@@ -445,10 +468,7 @@ function run_npair(N::Int=1;
     println("-"^60)
     @printf("Final fidelity: %.8f\n", final_fidelity)
 
-    evals_a, evecs_a = eigen_decomp(sys.H_Ja_mat)
-    evals_b, evecs_b = eigen_decomp(sys.H_Jb_mat)
-    ψf = trotter_fwd(sys, Vector{ComplexF64}(psi0), ctrls_opt, dt,
-                     evals_a, evecs_a, evals_b, evecs_b)
+    ψf = trotter_fwd(sys, Vector{ComplexF64}(psi0), ctrls_opt, dt)
     @printf("|⟨ψ_target|ψ_final⟩|² = %.8f\n", abs2(dot(psi_target, ψf)))
 
     if save

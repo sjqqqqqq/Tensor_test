@@ -13,22 +13,19 @@ function fidelity_trajectory(N::Int, ctrls, T::Float64, num_steps::Int)
     sys = build_system(N)
     psi0, psi_tgt = default_states(sys)
     dt = T / (num_steps - 1)
-    evals_a, evecs_a = eigen_decomp(sys.H_Ja_mat)
-    evals_b, evecs_b = eigen_decomp(sys.H_Jb_mat)
 
     fid = zeros(Float64, num_steps)
     psi = Vector{ComplexF64}(psi0)
     fid[1] = abs2(dot(psi_tgt, psi))
     for n in 1:num_steps-1
         Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb = ctrls[n,:]
-        psi = trotter_step2d(sys, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt,
-                             evals_a,evecs_a,evals_b,evecs_b)
+        psi = trotter_step2d(sys, psi, Va1,Va2,Va3,Vb1,Vb2,Vb3,U,Ja,Jb, dt)
         fid[n+1] = abs2(dot(psi_tgt, psi))
     end
     return fid
 end
 
-function plot_case(N::Int; file::String = "data/GRAPE_2d_$(N).jld2",
+function plot_case(N::Int; file::String = "data/GRAPE_2d_Npair_$(N).jld2",
                    tag::String = "")
     d = load(file)
     n = d["n"]; T = d["T"]
