@@ -1,4 +1,3 @@
-using Pkg; Pkg.activate(joinpath(@__DIR__, ".."))
 using Printf, Random, LinearAlgebra, JLD2
 
 include("exact_GRAPE.jl")
