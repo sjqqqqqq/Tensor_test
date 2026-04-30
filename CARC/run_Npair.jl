@@ -25,7 +25,7 @@ function load_ctrls(N::Int, num_steps::Int)
     return ctrls
 end
 
-N = 9
+N = 10
 
 println("\n" * "#"^70)
 println("# Running N = $N")
