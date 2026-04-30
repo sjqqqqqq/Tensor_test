@@ -7,5 +7,6 @@
 *.txt
 *.png
 **/*.jld2
+!CARC/data/*.jld2
 **/*.out
 CLAUDE.md
