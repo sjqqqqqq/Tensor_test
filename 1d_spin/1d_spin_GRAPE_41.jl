@@ -12,7 +12,7 @@ let
     Jx     = 2π           # XXX Heisenberg: Jx = Jy = Jz = 2π
     Jy     = 2π           # (set Jz = 2.2π for XXZ)
     Jz     = 2π
-    T      = 5.0          # total time (paper uses T = 5 for d = 11)
+    T      = 10.0          # total time (paper uses T = 5 for d = 11)
     nsteps = 500          # Trotter steps, dt = 0.01 (paper: τ = 10⁻²)
     dt     = T / nsteps
     cutoff = 1e-10
