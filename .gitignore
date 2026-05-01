@@ -10,3 +10,4 @@
 !CARC/data/*.jld2
 **/*.out
 CLAUDE.md
+*.md
