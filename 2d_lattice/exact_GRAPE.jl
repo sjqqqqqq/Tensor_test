@@ -32,6 +32,11 @@
 #   H₁ = diagonal part; H_Ja and H_Jb commute since they act on different species.
 #   exp(-iHdt) ≈ exp(-iH₁dt/2) · exp(-iJa·H_Ja·dt) · exp(-iJb·H_Jb·dt) · exp(-iH₁dt/2)
 #
+# Constraint: Ja(t), Jb(t) ≥ 0 for all t.  Enforced by the change of variables
+# Ja = u_Ja², Jb = u_Jb²; the L-BFGS optimizer sees the unconstrained u's and
+# the physics sees the squared (non-negative) hoppings.  Saved pulses are the
+# physical Ja, Jb (already squared), so downstream replay scripts are unchanged.
+#
 # For N=1 the √-factors all reduce to 1 and the basis has 4 states
 # [1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1] in that order — matrices are identical
 # to 2d_lattice_GRAPE.jl, so the optimizer trajectory is bit-for-bit the same.
@@ -337,22 +342,40 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
         ctrls = copy(ctrls0)
     end
 
+    # Non-negativity reparameterization for Ja, Jb: optimizer sees u, physics
+    # sees u².  Seed u from sqrt of the (clipped) physical seed so the initial
+    # trajectory matches what the unconstrained version would have done.
+    x_init = copy(ctrls)
+    x_init[:, 8] .= sqrt.(max.(ctrls[:, 8], 0.0))
+    x_init[:, 9] .= sqrt.(max.(ctrls[:, 9], 0.0))
+
+    @inline function unpack(x)
+        u = reshape(x, num_steps, 9)
+        c = copy(u)
+        c[:, 8] .= u[:, 8].^2
+        c[:, 9] .= u[:, 9].^2
+        return u, c
+    end
+
     function objective(x)
-        c = reshape(x, num_steps, 9)
+        _, c = unpack(x)
         ψf = trotter_fwd(sys, ψ0, c, dt)
         return 1.0 - abs2(dot(ψt, ψf))
     end
 
     function gradient!(g, x)
-        c = reshape(x, num_steps, 9)
+        u, c = unpack(x)
         states   = trotter_fwd_store(sys, ψ0, c, dt)
         overlap  = dot(ψt, states[end])
         costates = trotter_bwd_store(sys, ψt, c, dt)
         grads    = compute_grads(sys, states, costates, c, dt, overlap)
+        # chain rule for Ja = u_Ja², Jb = u_Jb²:  ∂F/∂u = 2u · ∂F/∂J
+        grads[:, 8] .*= 2 .* u[:, 8]
+        grads[:, 9] .*= 2 .* u[:, 9]
         g .= -vec(grads)
     end
 
-    x0 = vec(ctrls)
+    x0 = vec(x_init)
     iter_count = Ref(0)
 
     function cb(state)
@@ -381,7 +404,10 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
         )
     )
 
-    ctrls_opt      = reshape(Optim.minimizer(result), num_steps, 9)
+    u_opt = reshape(Optim.minimizer(result), num_steps, 9)
+    ctrls_opt = copy(u_opt)
+    ctrls_opt[:, 8] .= u_opt[:, 8].^2
+    ctrls_opt[:, 9] .= u_opt[:, 9].^2
     final_fidelity = 1.0 - Optim.minimum(result)
 
     if verbose
@@ -432,7 +458,8 @@ Run N-pair GRAPE.  Default random seed / initial-control recipe matches
 """
 function run_npair(N::Int=1;
                    T=2π, num_steps=201, seed=42, max_iter=500,
-                   save=true, psi0=nothing, psi_target=nothing, verbose=true)
+                   save=true, psi0=nothing, psi_target=nothing, verbose=true,
+                   ctrls0=nothing)
     println("="^60)
     println("GRAPE (Trotter) — 2D Lattice, N = $N pair(s)")
     println("="^60)
@@ -449,15 +476,21 @@ function run_npair(N::Int=1;
     dt = T / (num_steps - 1)
     @printf("Time: T = %.4f,  steps = %d,  dt = %.4f\n\n", T, num_steps, dt)
 
-    Random.seed!(seed)
-    t_arr = collect(range(0, T, length=num_steps))
-    ctrls0 = zeros(num_steps, 9)
-    for k in 1:6
-        ctrls0[:, k] .= 0.1 * randn(num_steps)
+    if isnothing(ctrls0)
+        Random.seed!(seed)
+        t_arr = collect(range(0, T, length=num_steps))
+        ctrls0 = zeros(num_steps, 9)
+        for k in 1:6
+            ctrls0[:, k] .= 0.1 * randn(num_steps)
+        end
+        ctrls0[:, 7] .= 1.0 .+ 0.1 * randn(num_steps)
+        ctrls0[:, 8] .= 1.0 .+ 0.2*sin.(2π.*t_arr./T) .+ 0.1*randn(num_steps)
+        ctrls0[:, 9] .= 1.0 .+ 0.2*cos.(2π.*t_arr./T) .+ 0.1*randn(num_steps)
+    else
+        @assert size(ctrls0) == (num_steps, 9) "ctrls0 must be ($(num_steps), 9), got $(size(ctrls0))"
+        ctrls0 = copy(ctrls0)
+        println("Using provided ctrls0 (warm start).")
     end
-    ctrls0[:, 7] .= 1.0 .+ 0.1 * randn(num_steps)
-    ctrls0[:, 8] .= 1.0 .+ 0.2*sin.(2π.*t_arr./T) .+ 0.1*randn(num_steps)
-    ctrls0[:, 9] .= 1.0 .+ 0.2*cos.(2π.*t_arr./T) .+ 0.1*randn(num_steps)
 
     println("Starting GRAPE optimization...")
     println("-"^60)
