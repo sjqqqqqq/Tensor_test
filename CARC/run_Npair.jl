@@ -28,7 +28,8 @@ function load_ctrls(N::Int, num_steps::Int)
     return ctrls
 end
 
-N = 7
+length(ARGS) >= 1 || error("Usage: julia run_Npair.jl N")
+N = parse(Int, ARGS[1])
 
 println("\n" * "#"^70)
 println("# Running N = $N")
