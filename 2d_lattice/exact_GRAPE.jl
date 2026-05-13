@@ -325,6 +325,19 @@ end
 # GRAPE optimization
 # ============================================================================
 
+# Non-negativity reparameterization for Ja, Jb via softplus.
+#   J = softplus(u) = log(1 + exp(u))           (strictly positive, smooth)
+#   dJ/du = σ(u)  = 1 / (1 + exp(-u))           (the logistic sigmoid)
+#   u(J)  = log(expm1(J))                       (inverse, for seeding)
+# Numerically stable forms below avoid overflow at large |u| / small J.
+@inline _softplus(u) = u > 0 ? u + log1p(exp(-u)) : log1p(exp(u))
+@inline _sigmoid(u)  = u ≥ 0 ? 1 / (1 + exp(-u)) : exp(u) / (1 + exp(u))
+@inline function _softplus_inv(J)
+    # u = log(exp(J) - 1) = log(expm1(J)); for large J this is ≈ J.
+    Jc = max(J, 1e-12)
+    return Jc > 20.0 ? Jc : log(expm1(Jc))
+end
+
 function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
                         ctrls0=nothing, max_iter=500, tol=1e-4, verbose=true)
 
@@ -342,18 +355,19 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
         ctrls = copy(ctrls0)
     end
 
-    # Non-negativity reparameterization for Ja, Jb: optimizer sees u, physics
-    # sees u².  Seed u from sqrt of the (clipped) physical seed so the initial
-    # trajectory matches what the unconstrained version would have done.
+    # Non-negativity reparameterization for Ja, Jb via softplus: optimizer sees
+    # u, physics sees J = softplus(u).  Unlike u² this has bounded gradient
+    # (dJ/du = σ(u) ∈ (0,1)), so the optimizer cannot self-amplify into large-J
+    # runaways and is not trapped by the dF/du = 0 stationary point at J = 0.
     x_init = copy(ctrls)
-    x_init[:, 8] .= sqrt.(max.(ctrls[:, 8], 0.0))
-    x_init[:, 9] .= sqrt.(max.(ctrls[:, 9], 0.0))
+    x_init[:, 8] .= _softplus_inv.(ctrls[:, 8])
+    x_init[:, 9] .= _softplus_inv.(ctrls[:, 9])
 
     @inline function unpack(x)
         u = reshape(x, num_steps, 9)
         c = copy(u)
-        c[:, 8] .= u[:, 8].^2
-        c[:, 9] .= u[:, 9].^2
+        c[:, 8] .= _softplus.(u[:, 8])
+        c[:, 9] .= _softplus.(u[:, 9])
         return u, c
     end
 
@@ -369,9 +383,9 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
         overlap  = dot(ψt, states[end])
         costates = trotter_bwd_store(sys, ψt, c, dt)
         grads    = compute_grads(sys, states, costates, c, dt, overlap)
-        # chain rule for Ja = u_Ja², Jb = u_Jb²:  ∂F/∂u = 2u · ∂F/∂J
-        grads[:, 8] .*= 2 .* u[:, 8]
-        grads[:, 9] .*= 2 .* u[:, 9]
+        # chain rule for J = softplus(u):  ∂F/∂u = σ(u) · ∂F/∂J
+        grads[:, 8] .*= _sigmoid.(u[:, 8])
+        grads[:, 9] .*= _sigmoid.(u[:, 9])
         g .= -vec(grads)
     end
 
@@ -406,8 +420,8 @@ function grape_2d_Npair(sys::System2DNpair, psi0, psi_target, T, num_steps;
 
     u_opt = reshape(Optim.minimizer(result), num_steps, 9)
     ctrls_opt = copy(u_opt)
-    ctrls_opt[:, 8] .= u_opt[:, 8].^2
-    ctrls_opt[:, 9] .= u_opt[:, 9].^2
+    ctrls_opt[:, 8] .= _softplus.(u_opt[:, 8])
+    ctrls_opt[:, 9] .= _softplus.(u_opt[:, 9])
     final_fidelity = 1.0 - Optim.minimum(result)
 
     if verbose
