@@ -5,6 +5,9 @@ include(joinpath(@__DIR__, "..", "2d_lattice", "exact_GRAPE.jl"))
 
 using JLD2
 using Printf
+using LinearAlgebra
+
+@printf("BLAS threads = %d\n", BLAS.get_num_threads())
 
 const T_TOTAL  = 2π
 const NUM_STEPS = 201
