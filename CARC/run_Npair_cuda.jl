@@ -14,7 +14,7 @@ if CUDA.functional()
     @printf("CUDA device: %s\n", CUDA.name(CUDA.device()))
     dev = CUDA.device()
     @printf("Free GPU memory: %.2f GB / %.2f GB total\n",
-            CUDA.available_memory() / 2^30, CUDA.total_memory() / 2^30)
+            CUDA.free_memory() / 2^30, CUDA.total_memory() / 2^30)
 end
 
 const T_TOTAL  = 2π
