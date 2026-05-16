@@ -223,14 +223,15 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
     end
 
     x_init = copy(ctrls)
-    x_init[:, 8] .= _softplus_inv.(ctrls[:, 8])
-    x_init[:, 9] .= _softplus_inv.(ctrls[:, 9])
+    # Positivity constraint on Ja/Jb removed — Ja/Jb can be negative.
+    # x_init[:, 8] .= _softplus_inv.(ctrls[:, 8])
+    # x_init[:, 9] .= _softplus_inv.(ctrls[:, 9])
 
     @inline function unpack(x)
         u = reshape(x, num_steps, 9)
         c = copy(u)
-        c[:, 8] .= _softplus.(u[:, 8])
-        c[:, 9] .= _softplus.(u[:, 9])
+        # c[:, 8] .= _softplus.(u[:, 8])
+        # c[:, 9] .= _softplus.(u[:, 9])
         return u, c
     end
 
@@ -246,9 +247,9 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
         overlap  = dot(ψt, states[end])
         costates = trotter_bwd_store_cuda(sys, ψt, c, dt)
         grads    = compute_grads_cuda(sys, states, costates, c, dt, overlap)
-        # Chain rule for J = softplus(u)
-        grads[:, 8] .*= _sigmoid.(u[:, 8])
-        grads[:, 9] .*= _sigmoid.(u[:, 9])
+        # Chain rule for J = softplus(u) — disabled, J is now unconstrained.
+        # grads[:, 8] .*= _sigmoid.(u[:, 8])
+        # grads[:, 9] .*= _sigmoid.(u[:, 9])
         g .= -vec(grads)
         # Release the large state/costate arrays before the next L-BFGS step
         states = nothing
@@ -287,8 +288,8 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
 
     u_opt = reshape(Optim.minimizer(result), num_steps, 9)
     ctrls_opt = copy(u_opt)
-    ctrls_opt[:, 8] .= _softplus.(u_opt[:, 8])
-    ctrls_opt[:, 9] .= _softplus.(u_opt[:, 9])
+    # ctrls_opt[:, 8] .= _softplus.(u_opt[:, 8])
+    # ctrls_opt[:, 9] .= _softplus.(u_opt[:, 9])
     final_fidelity = 1.0 - Optim.minimum(result)
 
     if verbose
