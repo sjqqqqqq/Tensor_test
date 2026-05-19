@@ -23,6 +23,18 @@ using JLD2
 
 include(joinpath(@__DIR__, "exact_GRAPE.jl"))
 
+# Non-negativity reparameterization for Ja, Jb via smoothed ReLU.
+#   J  = ½ (u + √(u² + ε))                  (strictly > 0, smooth, → max(u,0))
+#   dJ = ½ (1 + u / √(u² + ε)) ∈ (0, 1)     (bounded — no runaway)
+#   u(J) = J − ε / (4J)                     (inverse for J > 0; J=0 ↦ −∞)
+# ε controls the corner sharpness; 1e-6 keeps the kink tight while staying
+# numerically tame.  Like softplus this has no stationary-point trap at J=0
+# (dJ/du > 0 everywhere), but it avoids the exp/log of softplus.
+const _SRELU_EPS = 1e-6
+@inline _srelu(u)      = 0.5 * (u + sqrt(u*u + _SRELU_EPS))
+@inline _srelu_grad(u) = 0.5 * (1 + u / sqrt(u*u + _SRELU_EPS))
+@inline _srelu_inv(J)  = (Jc = max(J, 1e-12); Jc - _SRELU_EPS / (4 * Jc))
+
 # ============================================================================
 # GPU-backed system
 # ============================================================================
@@ -222,18 +234,16 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
         ctrls = copy(ctrls0)
     end
 
+    # Optimizer sees u, physics sees J = srelu(u) ≥ 0 (cols 8, 9).
     x_init = copy(ctrls)
-    # Box constraint Ja, Jb ≥ 0 (cols 8, 9). Other channels unconstrained.
-    x_init[:, 8] .= max.(x_init[:, 8], 0.0)
-    x_init[:, 9] .= max.(x_init[:, 9], 0.0)
-    lower = fill(-Inf, num_steps, 9); lower[:, 8] .= 0.0; lower[:, 9] .= 0.0
-    upper = fill( Inf, num_steps, 9)
+    x_init[:, 8] .= _srelu_inv.(ctrls[:, 8])
+    x_init[:, 9] .= _srelu_inv.(ctrls[:, 9])
 
     @inline function unpack(x)
         u = reshape(x, num_steps, 9)
         c = copy(u)
-        # c[:, 8] .= _softplus.(u[:, 8])
-        # c[:, 9] .= _softplus.(u[:, 9])
+        c[:, 8] .= _srelu.(u[:, 8])
+        c[:, 9] .= _srelu.(u[:, 9])
         return u, c
     end
 
@@ -249,9 +259,9 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
         overlap  = dot(ψt, states[end])
         costates = trotter_bwd_store_cuda(sys, ψt, c, dt)
         grads    = compute_grads_cuda(sys, states, costates, c, dt, overlap)
-        # Chain rule for J = softplus(u) — disabled, J is now unconstrained.
-        # grads[:, 8] .*= _sigmoid.(u[:, 8])
-        # grads[:, 9] .*= _sigmoid.(u[:, 9])
+        # Chain rule for J = srelu(u): ∂F/∂u = srelu'(u) · ∂F/∂J
+        grads[:, 8] .*= _srelu_grad.(u[:, 8])
+        grads[:, 9] .*= _srelu_grad.(u[:, 9])
         g .= -vec(grads)
         # Release the large state/costate arrays before the next L-BFGS step
         states = nothing
@@ -277,9 +287,8 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
     end
 
     result = optimize(
-        objective, gradient!,
-        vec(lower), vec(upper), x0,
-        Fminbox(LBFGS(m=20)),
+        objective, gradient!, x0,
+        LBFGS(m=20),
         Optim.Options(
             iterations = max_iter,
             g_tol      = tol * 1e-2,
@@ -291,8 +300,8 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
 
     u_opt = reshape(Optim.minimizer(result), num_steps, 9)
     ctrls_opt = copy(u_opt)
-    # ctrls_opt[:, 8] .= _softplus.(u_opt[:, 8])
-    # ctrls_opt[:, 9] .= _softplus.(u_opt[:, 9])
+    ctrls_opt[:, 8] .= _srelu.(u_opt[:, 8])
+    ctrls_opt[:, 9] .= _srelu.(u_opt[:, 9])
     final_fidelity = 1.0 - Optim.minimum(result)
 
     if verbose
