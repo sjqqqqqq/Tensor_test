@@ -223,9 +223,11 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
     end
 
     x_init = copy(ctrls)
-    # Positivity constraint on Ja/Jb removed — Ja/Jb can be negative.
-    # x_init[:, 8] .= _softplus_inv.(ctrls[:, 8])
-    # x_init[:, 9] .= _softplus_inv.(ctrls[:, 9])
+    # Box constraint Ja, Jb ≥ 0 (cols 8, 9). Other channels unconstrained.
+    x_init[:, 8] .= max.(x_init[:, 8], 0.0)
+    x_init[:, 9] .= max.(x_init[:, 9], 0.0)
+    lower = fill(-Inf, num_steps, 9); lower[:, 8] .= 0.0; lower[:, 9] .= 0.0
+    upper = fill( Inf, num_steps, 9)
 
     @inline function unpack(x)
         u = reshape(x, num_steps, 9)
@@ -275,8 +277,9 @@ function grape_2d_Npair_cuda(sys::System2DNpairCUDA, psi0, psi_target, T, num_st
     end
 
     result = optimize(
-        objective, gradient!, x0,
-        LBFGS(m=20),
+        objective, gradient!,
+        vec(lower), vec(upper), x0,
+        Fminbox(LBFGS(m=20)),
         Optim.Options(
             iterations = max_iter,
             g_tol      = tol * 1e-2,
