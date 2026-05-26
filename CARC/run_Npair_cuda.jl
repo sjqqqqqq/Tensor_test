@@ -1,7 +1,8 @@
 using Pkg
 Pkg.activate("Tensor_test")
 
-include(joinpath(@__DIR__, "..", "2d_lattice", "exact_GRAPE_cuda.jl"))
+# include(joinpath(@__DIR__, "..", "2d_lattice", "exact_GRAPE_cuda.jl"))
+include(joinpath(@__DIR__, "..", "2d_lattice", "exact_GRAPE_cuda_unitary.jl"))
 
 using JLD2
 using Printf
