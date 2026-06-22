@@ -41,26 +41,32 @@ function plot_case(N::Int; file::String = "data/GRAPE_2d_Npair_$(N).jld2",
     fid = fidelity_trajectory(N, ctrls, T, n)
     println("   recomputed F(T) = ", round(fid[end], digits=6))
 
-    pVa = plot(t, Va1; label="Va1", lw=1.2, xlabel="t", ylabel="Va", title="a-type potentials")
+    xlab = "t ⋅ J₀"
+
+    pVa = plot(t, Va1; label="Va1", lw=1.2, xlabel=xlab, ylabel="Va (J₀)", title="a-type potentials",
+               legend=:outertop, legend_columns=-1)
     plot!(pVa, t, Va2; label="Va2", lw=1.2)
     plot!(pVa, t, Va3; label="Va3", lw=1.2)
 
-    pVb = plot(t, Vb1; label="Vb1", lw=1.2, xlabel="t", ylabel="Vb", title="b-type potentials")
-    plot!(pVb, t, Vb2; label="Vb2", lw=1.2)
-    plot!(pVb, t, Vb3; label="Vb3", lw=1.2)
+    pVb = plot(t, Vb1; label="Vm1", lw=1.2, xlabel=xlab, ylabel="Vm (J₀)", title="m-type potentials",
+               legend=:outertop, legend_columns=-1)
+    plot!(pVb, t, Vb2; label="Vm2", lw=1.2)
+    plot!(pVb, t, Vb3; label="Vm3", lw=1.2)
 
     pU = plot(t, U; label="U", lw=1.5, color=:black,
-              xlabel="t", ylabel="U", title="On-site interaction", legend=false)
+              xlabel=xlab, ylabel="U (J₀)", title="On-site interaction", legend=false)
 
     pJ = plot(t, Ja; label="Ja", lw=1.5, color=:red,
-              xlabel="t", ylabel="J", title="Hopping amplitudes")
-    plot!(pJ, t, Jb; label="Jb", lw=1.5, color=:blue, ls=:dash)
+              xlabel=xlab, ylabel="J (J₀)", title="Hopping amplitudes",
+              legend=:outertop, legend_columns=-1)
+    plot!(pJ, t, Jb; label="Jm", lw=1.5, color=:blue)
+    hline!(pJ, [1.0]; label="J₀=1", lw=1.0, ls=:dash, color=:black)
 
     p_ctrl = plot(pVa, pVb, pU, pJ; layout=(2,2), size=(900, 500),
                   plot_title="Controls (N=$N)")
 
     p_fid = plot(t, fid;
-                 xlabel="t", ylabel="F(t)",
+                 xlabel=xlab, ylabel="F(t)",
                  title="Fidelity vs Time (N=$N, F=$(round(fid[end], digits=4)))",
                  legend=false, lw=1.5, ylim=(0, 1.05), color=:crimson)
 
